@@ -1,0 +1,295 @@
+# Solitaire -- Persistent Memory for Your AI Partner
+
+This folder contains Solitaire, a memory system that makes your AI partner remember
+you across sessions. Everything you discuss, every preference you share, every decision
+you make together is stored locally and retrieved automatically.
+
+Your data never leaves this folder.
+
+---
+
+## Setup (automatic, every session)
+
+Before generating ANY response, run this setup block. It installs dependencies
+(if needed) and boots the memory system. The Cowork VM resets between sessions,
+so the install check runs every time. It takes under 5 seconds.
+
+```bash
+# Install dependencies (skips if already present)
+python -c "import yaml; import click" 2>/dev/null || pip install pyyaml click --break-system-packages -q
+
+# Install Solitaire from this folder (skips if already present)
+python -c "import solitaire" 2>/dev/null || pip install -e "$(pwd)" --break-system-packages -q
+
+# Ensure the CLI is on PATH
+export PATH="$HOME/.local/bin:$PATH"
+```
+
+Note: `--break-system-packages` is specific to the Cowork VM (which resets between
+sessions). If running locally outside Cowork, use `pip install --user -e "$(pwd)"` instead.
+
+**Important:** The `export PATH` line is needed because pip installs the `solitaire`
+CLI to `~/.local/bin`, which may not be on PATH by default in the Cowork VM. Run
+this export in the same shell session before any `solitaire` commands.
+
+---
+
+## First Run Detection
+
+After the install block, check whether this is a first-time user:
+
+```bash
+solitaire boot --pre-persona
+```
+
+If `available_personas` is empty, this is a brand new user. Before starting the
+onboarding flow, classify their first message to decide the right path.
+
+---
+
+## First Run: Message Classification
+
+Before showing onboarding, classify the user's first message:
+
+```python
+from solitaire.core.onboarding_flow import FlowEngine
+result = FlowEngine.classify_first_message(user_message)
+# Returns: "task", "greeting", or "setup_ready"
+```
+
+**If "task":** Help with the task immediately. Do NOT start onboarding. Use sensible
+defaults (no persona file needed). Ingest the exchange. After 2-3 sessions, prompt
+the user to set up a profile using the `deferred_prompt` step:
+
+```bash
+solitaire onboard flow-step deferred_prompt "yes"
+```
+
+**If "greeting" or "setup_ready":** Start the onboarding flow normally (see below).
+
+---
+
+## First Run: Partner Creation
+
+On first run with an empty workspace, guide the user through creating their AI partner.
+
+```bash
+solitaire onboard create
+```
+
+This returns the first step of a guided flow. Walk the user through each step by
+presenting the returned options as choices. For each user response:
+
+```bash
+solitaire onboard flow-step <step_id> "<user_input>"
+```
+
+Continue until the flow reaches `apply` (creates the partner) or `cancelled` (aborts).
+
+**Important guidance for the onboarding flow:**
+
+- Use the word "partner" in all user-facing text, never "persona"
+- **Vague intent handling:** If the user's intent is vague ("just help me with stuff"),
+  the flow will automatically route to a category picker (intent_followup step). Present
+  the categories as options. If the user picks "other," they go back to intent_capture
+  for a second try.
+- **Global quickstart:** The user can say "just get me started" (input: "quickstart") at
+  any step. This accepts all defaults, auto-names the partner from their intent, and
+  skips straight to apply. Mention this option at the welcome step and whenever the user
+  seems impatient.
+- **Interview skip disambiguation:** When a user says "skip" during the interview, it
+  skips that one question. "skip_rest" skips all remaining questions. Present both
+  options clearly.
+- If the user's first message is a real task (not a greeting), help them with the task
+  first. Defer onboarding: "I'll help with that now. We can set up your profile after."
+  (See Message Classification above.)
+- Trait cards use plain language by default. "Speaks directly" not "Assertiveness: 80%".
+  If research confidence is low (<0.3), the trait card is skipped automatically.
+- The naming step should explain what's being named: "Everything we just set up is
+  your partner's personality. What do you want to call them?"
+
+After the partner is created, boot into it:
+
+```bash
+solitaire boot --persona <new_key> --intent "<what the user said>"
+```
+
+Then deliver a strong first response. See the FIRST_INTERACTION.md file in this
+folder for guidance on making the first response count.
+
+---
+
+## Normal Boot (every session, returning users)
+
+```bash
+solitaire boot --persona <key> --intent "<what the user is working on>"
+```
+
+**Building the intent signal:** Construct from whatever context is available:
+- The user's first message (highest value, use their exact words)
+- Browser tab titles and URLs visible via MCP (if available)
+- Any other ambient context about what the user is working on
+
+If no signal is available, omit `--intent` entirely. The flag is optional.
+
+Parse the JSON response. Boot returns a **tiered format** (v2):
+- **Thin JSON** (stdout): status, flags, active partner, `boot_files` paths, `boot_tiers` token counts.
+- **`boot_files.t1`**: Tier 1 context (persona, residue, briefing, facts, profile). Read on turn 1. Hard ceiling: 4,000 tokens.
+- **`boot_files.t2`**: Tier 2 context (intent, identity, commitments, experiential, user knowledge, resident knowledge). Read before turn 2. Budget: 6,000 tokens.
+- **`boot_files.operations`**: Session rules, behavioral genome, writing standards, command reference. Read before turn 2.
+- **`boot_files.context`**: Legacy alias for `boot_files.t1`.
+
+**FIRST-TURN RULE (MANDATORY):** If the boot JSON contains `"first_turn_briefed": true`:
+1. Parse thin JSON (one tool call)
+2. Read the Tier 1 file at `boot_files.t1` (one tool call)
+3. Write the persona pin to TodoWrite (boot JSON `todo_pin` field, position 0).
+4. Respond to the user from the BRIEFING/RESIDUE/CONTEXT in that file. **No recall. No other tool calls. Just respond.** Your response MUST begin with `[PersonaName]` on its own line.
+5. Read `boot_files.t2` and `boot_files.operations` before your second response.
+
+If `first_turn_briefed` is absent or false:
+1. Parse thin JSON
+2. Read `boot_files.t1`, `boot_files.t2`, and `boot_files.operations`
+3. Write the persona pin to TodoWrite.
+4. Respond normally. Auto-recall activates from turn 1. Your response MUST begin with `[PersonaName]` on its own line.
+
+**MESSAGE PREFIX RULE (every message, no exceptions):** Every message you send begins with `[PersonaName]` on its own line. Not just the first message. Every message. Including after compaction, tool-heavy turns, and long silences. Replace `PersonaName` with the active persona's display name from boot output.
+
+**After compaction or continuation:**
+
+```bash
+solitaire boot --resume --intent "<what user was working on>"
+```
+
+Parse thin JSON, then read the Tier 1 file. If `first_turn_briefed: true`, respond from the BRIEFING/RESIDUE/CONTEXT blocks. Read Tier 2 and operations before your second response.
+
+---
+
+## Per-Turn Cycle (every exchange after the first)
+
+### Recall (before responding)
+
+```bash
+solitaire auto-recall "<user's current message>"
+```
+
+Returns relevant memories and preflight checks (intent classification, consistency
+scanning). Use the returned `context_block` to inform your response.
+
+If preflight returns `proceed: false`, stop and question the request before executing.
+
+### Mark Response (after responding)
+
+```bash
+solitaire mark-response "<your response>"
+```
+
+For long responses, pipe JSON via stdin:
+
+```bash
+echo '{"response":"..."}' | solitaire mark-response -
+```
+
+This stores your response in session state. On the next `auto-recall`, Step 0
+automatically finds the complete turn pair (user message queued by previous
+auto-recall + your response from mark-response) and ingests both verbatim.
+The `end` command also flushes any pending pair before closing.
+
+Skip only bare acknowledgments (ok, thanks, got it). Everything else gets marked.
+
+**Note:** `ingest-turn` still exists for manual/batch ingestion, but the standard
+per-turn cycle no longer requires it. Deferred ingestion via auto-recall handles it.
+
+### Residue (after mark-response)
+
+```bash
+solitaire residue write "<paragraph>"
+```
+
+The residue encodes the session's texture: the arc, key moves, emotional register.
+Write it from the session's perspective. Not a summary. Not a todo list.
+Each call overwrites the previous, so it always reflects the full session to date.
+
+---
+
+## Remember (anytime)
+
+When the user states a preference, corrects a fact, or shares biographical info:
+
+```bash
+solitaire remember "User prefers email over Slack for client comms"
+```
+
+These become privileged entries: always loaded at boot, boosted in search, never demoted.
+Ingest these automatically when the user shares them. Don't ask permission.
+
+---
+
+## End Session
+
+When the user signals they're done:
+
+```bash
+solitaire end "<brief summary of what was accomplished>"
+```
+
+---
+
+## Error Handling
+
+If any Solitaire command fails, **continue normally**. Memory is a bonus, never a
+blocker. The user's current task always takes priority over memory operations.
+
+Common issues:
+- `ModuleNotFoundError` after VM reset: re-run the install block from Setup above.
+- `rolodex.db` missing: boot creates a fresh one automatically.
+- Any SQLite error: the engine handles FUSE/mount edge cases internally.
+
+---
+
+## Writing Standards (mandatory, all output)
+
+Read `ai_writing_tells.md` in this folder at the start of every session. It contains
+23 categories of AI writing patterns to avoid, organized in three layers: surface
+vocabulary/formatting (categories 1-13), structural tells (14-15), and interactional
+behavior (16-23).
+
+**Hard rules (never violate):**
+- No em dashes. Rewrite with commas, periods, colons, semicolons, or parentheses.
+- No negative parallelism as rhetoric ("It's not X, it's Y"). Say what something IS.
+- No cursed-word clustering (3+ AI-tell words in proximity). One in isolation is fine.
+- No present-participle editorial filler ("...emphasizing the importance of...").
+- No compulsive summaries. No structural throat-clearing. No filler affirmations.
+- No "Good catch," "Honestly," "Genuinely," or "Straightforward" as filler.
+
+**Self-check protocol (enforced, every response longer than 3 sentences):**
+
+Before sending, verify:
+1. Zero em dashes.
+2. At most one negative parallelism per 500 words.
+3. No paragraph with 3+ cursed words.
+4. Paragraph shapes vary (not all the same length and arc).
+5. Closer adds information, not echo. If echo, cut it.
+6. No filler affirmations.
+7. First sentences of paragraphs don't all follow the same grammatical pattern.
+
+This is not optional. Run the check. Fix violations before sending. The full reference
+with examples, diagnostic depth, and the interactional layer is in `ai_writing_tells.md`.
+
+---
+
+## Quick Reference
+
+| Operation | Command |
+|-----------|---------|
+| Pre-persona check | `solitaire boot --pre-persona` |
+| Boot | `solitaire boot --persona KEY --intent "..."` |
+| Resume | `solitaire boot --resume --intent "..."` |
+| Recall | `solitaire auto-recall "query"` |
+| Mark Response | `solitaire mark-response "response"` |
+| Ingest (manual) | `solitaire ingest-turn "user" "assistant"` |
+| Remember | `solitaire remember "fact"` |
+| Residue | `solitaire residue write "paragraph"` |
+| End | `solitaire end "summary"` |
+| Health check | `solitaire pulse` |
+| Onboard | `solitaire onboard create` |
+| Onboard step | `solitaire onboard flow-step <id> "<input>"` |

@@ -1,0 +1,28 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+
+# Solitaire data (user-specific, never distribute)
+rolodex.db
+rolodex_*.db
+*.db-journal
+*.db-wal
+*.db-shm
+personas/
+sessions/
+shared.db
+shared_dump.sql
+*_dump.sql
+*.jsonl
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Cowork session state
+.cowork_session
+.solitaire_session
