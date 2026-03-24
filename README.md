@@ -18,13 +18,21 @@ This isn't a memory plugin. It's cognitive infrastructure for AI agents.
 
 **Runs locally, works with any model.** All data stays on your machine. Solitaire never makes network requests from its memory engine. The core API returns plain dicts and strings with no model-specific formatting. Claude, Gemini, a custom LLM: the host decides how to inject context into its own prompt. Solitaire doesn't care what model you use. It cares about the relationship between the model and the person using it.
 
-## Install
+## Getting started
 
-```bash
-pip install solitaire
-```
+### Cowork (recommended, zero-config)
 
-Or install from source:
+The fastest way to use Solitaire. No terminal, no code.
+
+1. [Download the latest release](https://github.com/PRDicta/Solitaire/releases/latest) (.zip file)
+2. Unzip the folder anywhere on your computer
+3. Open Cowork and select the unzipped folder as your workspace
+
+Solitaire boots automatically on your first message, walks you through creating a partner, and starts learning from every conversation.
+
+### From source (developers)
+
+If you have Python 3.10+ and git installed:
 
 ```bash
 git clone https://github.com/PRDicta/Solitaire.git
@@ -35,9 +43,9 @@ pip install -e .
 Optional dependencies for enhanced features:
 
 ```bash
-pip install solitaire[embeddings]   # sentence-transformers + torch
-pip install solitaire[llm]          # anthropic SDK
-pip install solitaire[all]          # everything
+pip install -e ".[embeddings]"   # sentence-transformers + torch
+pip install -e ".[llm]"          # anthropic SDK
+pip install -e ".[all]"          # everything
 ```
 
 **Requirements:** Python 3.10+. No external services, no containers, no Docker.
@@ -79,10 +87,6 @@ solitaire end "Reviewed Q1 numbers"
 
 All commands output JSON to stdout and diagnostics to stderr.
 
-### Cowork (zero-config)
-
-Drop this folder into Cowork as your workspace. Solitaire boots automatically on your first message, walks you through creating a partner, and starts learning from every conversation. No code required.
-
 ## Platform compatibility
 
 Solitaire runs on any platform that can execute Python 3.10+ and persist a directory between sessions.
@@ -100,7 +104,7 @@ Solitaire runs on any platform that can execute Python 3.10+ and persist a direc
 Five things the host agent must provide:
 
 1. **Persistent workspace directory.** A path on disk that survives between sessions. Set via `SOLITAIRE_WORKSPACE` env var or pass to `SolitaireEngine(workspace_dir=...)`.
-2. **Python 3.10+ runtime.** One `pip install` and it runs.
+2. **Python 3.10+ runtime.** One install and it runs.
 3. **Command execution.** Subprocess (`solitaire <command>`) or Python import.
 4. **System prompt injection.** Boot and recall return context blocks. The host agent injects these into the model's prompt. Without injection, Solitaire stores data but the model never sees it.
 5. **Per-turn lifecycle hook.** Call `ingest-turn` after each exchange. Optionally call `auto-recall` before responses and `residue write` after ingesting.
