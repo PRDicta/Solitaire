@@ -45,17 +45,26 @@ class SessionManager:
     def start_session(self, conversation_id: str) -> SessionInfo:
         """
         Register a new session. Safe to call on existing sessions
-        (uses INSERT OR REPLACE to update timestamps).
+        (preserves existing metadata on conflict, only updates
+        last_active and status).
         """
         now = datetime.utcnow()
         self.conn.execute(
-            """INSERT OR REPLACE INTO conversations
+            """INSERT INTO conversations
                (id, created_at, last_active, status, message_count,
                 entry_count, total_tokens, summary)
-               VALUES (?, ?, ?, 'active', 0, 0, 0, '')""",
+               VALUES (?, ?, ?, 'active', 0, 0, 0, '')
+               ON CONFLICT(id) DO UPDATE SET
+                   last_active = excluded.last_active,
+                   status = 'active'""",
             (conversation_id, now.isoformat(), now.isoformat())
         )
         self.conn.commit()
+
+        # Return actual session state (may have pre-existing data)
+        existing = self.get_session(conversation_id)
+        if existing:
+            return existing
         return SessionInfo(
             session_id=conversation_id,
             started_at=now,

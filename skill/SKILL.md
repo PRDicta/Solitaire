@@ -5,7 +5,7 @@ description: >
   a self-correcting knowledge graph, session continuity, and adaptive retrieval
   that learns from its own performance. Boot at session start, ingest every turn.
   Your agent develops, not just remembers.
-version: 0.1.0
+version: 1.0.0
 author: Dicta Technologies
 license: AGPL-3.0-or-later
 homepage: https://github.com/PRDicta/Solitaire-for-Agents

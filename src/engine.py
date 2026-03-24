@@ -169,6 +169,48 @@ class SolitaireEngine:
         self._booted = True
         return result
 
+    # ─── Mark Response ─────────────────────────────────────────────────────
+
+    def mark_response(self, response_text: str) -> Dict[str, Any]:
+        """Store the assistant's response for deferred ingestion.
+
+        Called after the LLM generates its response. Writes the response text
+        to pending_ingest.assistant in session state. The next recall() call
+        will find the complete turn pair and ingest it as Step 0.
+
+        Args:
+            response_text: The assistant's full response text.
+
+        Returns:
+            Dict with: status, whether pair is ready for ingestion.
+        """
+        if not response_text or not response_text.strip():
+            return {"status": "skip", "reason": "empty_response"}
+
+        try:
+            # Read current session data from disk
+            try:
+                with open(self._session_file, "r") as f:
+                    session_data = json.load(f)
+            except Exception:
+                session_data = dict(self._session_data)
+
+            pending = session_data.get("pending_ingest", {})
+            pending["assistant"] = response_text
+            session_data["pending_ingest"] = pending
+
+            with open(self._session_file, "w") as f:
+                json.dump(session_data, f)
+
+            return {
+                "status": "ok",
+                "pending_user": bool(pending.get("user")),
+                "pending_assistant": True,
+                "pair_ready": bool(pending.get("user")),
+            }
+        except Exception as e:
+            return {"error": f"mark_response failed: {e}"}
+
     # ─── Ingest ───────────────────────────────────────────────────────────
 
     def ingest(
@@ -1901,6 +1943,21 @@ class SolitaireEngine:
                 entry_ids=all_entry_ids,
             )
             stats["identity"] = id_result or {}
+        except Exception:
+            pass
+
+        # User facts extraction (from user messages only)
+        try:
+            from .core.user_facts import process_at_ingestion as _process_user_facts
+            user_entry_ids = [e.id for e in user_entries]
+            if user_msg and user_entry_ids:
+                uf_stats = _process_user_facts(
+                    conn=self._lib.rolodex.conn,
+                    content=user_msg,
+                    role="user",
+                    entry_ids=user_entry_ids,
+                )
+                stats["user_facts"] = uf_stats or {}
         except Exception:
             pass
 

@@ -36,10 +36,13 @@ _vendor_dir = str(Path(__file__).resolve().parent / "vendor")
 if _vendor_dir not in sys.path:
     sys.path.insert(0, _vendor_dir)
 
-# Prepend the solitaire package directory so SolitaireEngine is importable
+# Prepend the solitaire package directory so SolitaireEngine is importable.
+# The installable package lives under starter/ in the repo tree.
 _solitaire_root = str(Path(__file__).resolve().parent.parent)
-if _solitaire_root not in sys.path:
-    sys.path.insert(0, _solitaire_root)
+_solitaire_starter = str(Path(__file__).resolve().parent.parent / "starter")
+for _p in [_solitaire_root, _solitaire_starter]:
+    if _p not in sys.path:
+        sys.path.insert(0, _p)
 
 from mcp.server.fastmcp import FastMCP
 from solitaire import SolitaireEngine

@@ -150,15 +150,23 @@ _OBJECTIVE_PREDICATES = {
 
 
 def extract_facts(content: str, role: str,
-                  as_user_knowledge: bool = False) -> List[UserFact]:
+                  as_user_knowledge: bool = False,
+                  owner_name: str = "") -> List[UserFact]:
     """
     Extract structured facts from content using heuristic patterns.
 
     Only extracts from content that looks like factual statements.
-    Returns empty list if nothing matches (which is fine — most messages
+    Returns empty list if nothing matches (which is fine -- most messages
     don't contain extractable biographical facts).
+
+    Args:
+        owner_name: The user's name from profile. Used to resolve {owner}
+            placeholders in patterns and subjects. Falls back to "User"
+            if not provided.
     """
     import uuid
+
+    resolved_owner = owner_name.strip() if owner_name else "User"
 
     provenance = classify_provenance(role, as_user_knowledge, content)
     content_lower = content.lower().strip()
@@ -166,23 +174,29 @@ def extract_facts(content: str, role: str,
     seen = set()  # Dedup on (subject, predicate)
 
     for pattern, default_subject, predicate, fact_type in _FACT_PATTERNS:
-        for match in re.finditer(pattern, content_lower, re.IGNORECASE):
+        # Resolve {owner} in regex pattern and default subject
+        resolved_pattern = pattern.replace("{owner}", re.escape(resolved_owner.lower()))
+        resolved_subject = (default_subject or "").replace("{owner}", resolved_owner)
+        if not resolved_subject:
+            resolved_subject = resolved_owner
+
+        for match in re.finditer(resolved_pattern, content_lower, re.IGNORECASE):
             groups = match.groups()
 
             if default_subject is None and predicate == "name is":
-                # Special: "my wife is named Sarah" → subject="wife", value="Sarah"
+                # Special: "my wife is named Sarah" -> subject="wife", value="Sarah"
                 if len(groups) >= 2:
                     subject = groups[0].strip().title()
                     value = groups[1].strip().title()
                 else:
                     continue
             elif predicate == "founded" and len(groups) >= 2:
-                # "I founded Acme in 2024" → subject="Acme", value="2024"
+                # "I founded Acme in 2024" -> subject="Acme", value="2024"
                 subject = groups[0].strip().title()
                 value = groups[1].strip()
                 predicate = "founded in"
             else:
-                subject = default_subject or "{owner}"
+                subject = resolved_subject
                 value = groups[0].strip() if groups else ""
 
             if not value:
@@ -575,6 +589,7 @@ def process_at_ingestion(
     role: str,
     entry_ids: List[str],
     as_user_knowledge: bool = False,
+    owner_name: str = "",
 ) -> Dict[str, Any]:
     """
     Run the full user facts pipeline at ingestion time.
@@ -596,7 +611,7 @@ def process_at_ingestion(
     stats["provenance"] = provenance
 
     # Step 2: Extract facts
-    facts = extract_facts(content, role, as_user_knowledge)
+    facts = extract_facts(content, role, as_user_knowledge, owner_name=owner_name)
     if not facts:
         return stats
 

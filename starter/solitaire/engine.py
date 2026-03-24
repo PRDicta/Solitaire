@@ -2317,6 +2317,21 @@ note (1-2 sentences, temporal framing). Never as a list. Natural memory.
         except Exception:
             pass
 
+        # User facts extraction (from user messages only)
+        try:
+            from .core.user_facts import process_at_ingestion as _process_user_facts
+            user_entry_ids = [e.id for e in user_entries]
+            if user_msg and user_entry_ids:
+                uf_stats = _process_user_facts(
+                    conn=self._lib.rolodex.conn,
+                    content=user_msg,
+                    role="user",
+                    entry_ids=user_entry_ids,
+                )
+                stats["user_facts"] = uf_stats or {}
+        except Exception:
+            pass
+
         return stats
 
     # ─── Internal: Preflight Evaluation ───────────────────────────────────
