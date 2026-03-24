@@ -1,6 +1,6 @@
 # Solitaire
 
-AI models are stateless. Every session starts from zero. The industry's answer so far has been to bolt on a vector database and call it "memory," but retrieving similar text isn't remembering. It's search. There's no understanding of what matters, no sense of how a relationship has evolved, no ability to learn from what worked and what didn't.
+AI models are inherently ephemeral. Every session starts from zero. The industry's answer so far has been to bolt on a vector database and call it "memory," but retrieving similar text isn't remembering. It's search. There's no understanding of what matters, no sense of how a relationship has evolved, no ability to learn from what worked and what didn't.
 
 Solitaire is the layer that changes that. It gives any AI model a persistent self: an identity that evolves, a knowledge graph that grows, and a retrieval system that learns from its own performance. The model doesn't just recall what you said. It knows what you care about, what you've been working on, and how to pick up exactly where you left off. Session 50 feels fundamentally different from session 5 because something real has accumulated between them.
 
