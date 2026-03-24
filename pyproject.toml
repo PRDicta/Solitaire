@@ -32,7 +32,7 @@ dependencies = [
 [project.optional-dependencies]
 embeddings = [
     "sentence-transformers>=2.2.0",
-    "torch>=2.0.0",h
+    "torch>=2.0.0",
 ]
 llm = [
     "anthropic>=0.40.0",
@@ -48,8 +48,8 @@ all = [
 solitaire = "solitaire.cli:main"
 
 [project.urls]
-Homepage = "https://github.com/PRDicta/Solitaire"
-Repository = "https://github.com/PRDicta/Solitaire"
+Homepage = "https://github.com/PRDicta/Solitaire-for-Agents"
+Repository = "https://github.com/PRDicta/Solitaire-for-Agents"
 
 [tool.setuptools.packages.find]
 include = ["solitaire*"]
