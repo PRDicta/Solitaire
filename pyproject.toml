@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "solitaire"
-version = "1.0.0"
+version = "0.1.0"
 description = "Persistent memory, self-correcting retrieval, and evolving identity for AI agents. Local-first, model-agnostic."
 readme = "README.md"
 license = {text = "AGPL-3.0-or-later"}
@@ -32,7 +32,7 @@ dependencies = [
 [project.optional-dependencies]
 embeddings = [
     "sentence-transformers>=2.2.0",
-    "torch>=2.0.0",h
+    "torch>=2.0.0",
 ]
 llm = [
     "anthropic>=0.40.0",
@@ -48,8 +48,8 @@ all = [
 solitaire = "solitaire.cli:main"
 
 [project.urls]
-Homepage = "https://github.com/PRDicta/Solitaire"
-Repository = "https://github.com/PRDicta/Solitaire"
+Homepage = "https://github.com/PRDicta/Solitaire-for-Agents"
+Repository = "https://github.com/PRDicta/Solitaire-for-Agents"
 
 [tool.setuptools.packages.find]
 include = ["solitaire*"]

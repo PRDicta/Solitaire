@@ -1,14 +1,14 @@
 ---
 name: solitaire
 description: >
-  Persistent memory and evolving identity for AI agents. Gives your agent a
-  knowledge graph, session continuity, persona management, and adaptive retrieval
-  that survives across sessions. Boot at session start, ingest every turn. Your
-  agent remembers everything.
+  Cognitive architecture for AI agents. Gives your agent an evolving identity,
+  a self-correcting knowledge graph, session continuity, and adaptive retrieval
+  that learns from its own performance. Boot at session start, ingest every turn.
+  Your agent develops, not just remembers.
 version: 0.1.0
 author: Dicta Technologies
 license: AGPL-3.0-or-later
-homepage: https://github.com/PRDicta/Solitaire
+homepage: https://github.com/PRDicta/Solitaire-for-Agents
 requires:
   runtime: python>=3.10
   packages:
@@ -19,14 +19,17 @@ requires:
     llm: [anthropic>=0.40.0]
     compression: [tiktoken>=0.5.0]
 tags:
-  - memory
-  - persistence
+  - ai-agent
+  - agent-memory
+  - cognitive-architecture
   - identity
-  - agents
   - knowledge-graph
+  - self-learning
   - retrieval
   - persona
   - session-continuity
+  - model-agnostic
+  - local-first
 platforms:
   - claude-code
   - cowork
@@ -46,12 +49,11 @@ install: scripts/install.sh
 verify: scripts/verify.sh
 ---
 
-# Solitaire
+# Solitaire for Agents
 
-Persistent memory and evolving identity for AI agents. Solitaire stores every
-conversation turn in a local SQLite knowledge graph, retrieves relevant context
-on demand, and maintains an evolving persona that grows with use. Model-agnostic.
-Runs locally. Your data never leaves your machine.
+Cognitive architecture for AI agents. Solitaire gives your agent an evolving
+identity, a self-correcting knowledge graph, and retrieval that learns from its
+own performance. Model-agnostic. Runs locally. Your data never leaves your machine.
 
 ---
 
@@ -157,8 +159,8 @@ pip install solitaire
 From source:
 
 ```bash
-git clone https://github.com/PRDicta/Solitaire.git
-cd Solitaire && pip install -e .
+git clone https://github.com/PRDicta/Solitaire-for-Agents.git
+cd Solitaire-for-Agents && pip install -e .
 ```
 
 Optional extras:
