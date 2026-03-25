@@ -49,9 +49,9 @@ if [ -f "${REPO_ROOT}/pyproject.toml" ]; then
     "$PY" -m pip install -e "${REPO_ROOT}" --quiet --break-system-packages 2>/dev/null \
         || "$PY" -m pip install -e "${REPO_ROOT}" --quiet
 else
-    log "Installing from PyPI"
-    "$PY" -m pip install solitaire --quiet --break-system-packages 2>/dev/null \
-        || "$PY" -m pip install solitaire --quiet
+    err "pyproject.toml not found at ${REPO_ROOT}. Clone the repo first:"
+    err "  git clone https://github.com/PRDicta/Solitaire.git"
+    exit 1
 fi
 
 # ── Verify import ────────────────────────────────────────────────────────
@@ -68,4 +68,4 @@ else
     log "NOTE: CLI not on PATH. Use '$PY -m solitaire' or add pip's bin dir to PATH."
 fi
 
-log "Install complete. Run 'solitaire boot --pre-persona' to get started."
+lo

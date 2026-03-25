@@ -151,12 +151,6 @@ through pluggable search providers.
 ## Installation
 
 ```bash
-pip install solitaire
-```
-
-From source:
-
-```bash
 git clone https://github.com/PRDicta/Solitaire.git
 cd Solitaire && pip install -e .
 ```
@@ -164,10 +158,10 @@ cd Solitaire && pip install -e .
 Optional extras:
 
 ```bash
-pip install solitaire[embeddings]    # Semantic search via sentence-transformers
-pip install solitaire[llm]           # Anthropic API for enhanced ingestion
-pip install solitaire[compression]   # tiktoken for token counting
-pip install solitaire[all]           # Everything
+pip install -e ".[embeddings]"    # Semantic search via sentence-transformers
+pip install -e ".[llm]"           # Anthropic API for enhanced ingestion
+pip install -e ".[compression]"   # tiktoken for token counting
+pip install -e ".[all]"           # Everything
 ```
 
 ## INSTRUCTIONS.md Template
@@ -215,9 +209,4 @@ All methods return plain dicts or strings. No model-specific formatting.
 
 All CLI commands: JSON to stdout, diagnostics to stderr.
 
-Exit codes: `0` success, `1` internal error, `2` user error (bad args).
-
-## Full Command Reference
-
-See [references/commands.md](references/commands.md) for the complete command
-reference with all subcommands, flags, options, and output schemas.
+Exit codes: `0` success, `1` internal error, `2` u
