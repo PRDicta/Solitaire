@@ -1597,6 +1597,124 @@ class IdentityGraph:
             )
         self.conn.commit()
 
+    def _get_active_commitment_for_source(self, source_node_id: str) -> Optional[IdentityNode]:
+        """Find an existing active commitment derived from a given source node.
+
+        Returns the commitment node if one exists and is still active, None otherwise.
+        This prevents commitment proliferation: instead of creating a new commitment
+        every session, we reuse the existing one and accumulate signals against it.
+        """
+        rows = self.conn.execute(
+            """SELECT n.* FROM identity_nodes n
+               WHERE n.node_type = 'commitment'
+               AND n.status = 'active'
+               AND json_extract(n.metadata, '$.source_node') = ?
+               ORDER BY n.created_at DESC
+               LIMIT 1""",
+            (source_node_id,)
+        ).fetchall()
+        return self._row_to_node(rows[0]) if rows else None
+
+    def reattach_orphaned_signals(self) -> Dict:
+        """Find signals with commitment_id=None and try to attach them.
+
+        Orphaned signals occur when:
+        - The implicit detector fires but no active commitment matches
+        - A commitment was evaluated/retired before its signals arrived
+        - Timing gaps between signal creation and commitment lifecycle
+
+        This method looks at each orphaned signal's content to identify which
+        source node it relates to, then finds the current active commitment
+        for that source. If found, it reattaches the signal.
+
+        Returns stats dict with counts of reattached and still-orphaned signals.
+        """
+        orphaned = self.conn.execute(
+            """SELECT * FROM identity_signals
+               WHERE commitment_id IS NULL
+               ORDER BY created_at"""
+        ).fetchall()
+
+        if not orphaned:
+            return {"orphaned": 0, "reattached": 0, "still_orphaned": 0}
+
+        reattached = 0
+        still_orphaned = 0
+
+        for row in orphaned:
+            signal = self._row_to_signal(row)
+            # Try to determine which source node this signal relates to
+            target_commitment = self._match_orphan_to_commitment(signal)
+
+            if target_commitment:
+                self.conn.execute(
+                    """UPDATE identity_signals SET commitment_id = ? WHERE id = ?""",
+                    (target_commitment.id, signal.id)
+                )
+                reattached += 1
+            else:
+                still_orphaned += 1
+
+        if reattached > 0:
+            self.conn.commit()
+
+        return {
+            "orphaned": len(orphaned),
+            "reattached": reattached,
+            "still_orphaned": still_orphaned,
+        }
+
+    def _match_orphan_to_commitment(self, signal: IdentitySignal) -> Optional[IdentityNode]:
+        """Try to match an orphaned signal to an active commitment.
+
+        Uses the signal content to identify the source node pattern, then
+        looks up the active commitment for that source.
+        """
+        content = signal.content or ""
+
+        # Extract pattern name from content like "Unlinked [em_dash_usage]: ..."
+        # or "Implicit [diplomatic_preamble]: ..."
+        import re
+        pattern_match = re.search(r'\[(\w+)\]', content)
+        if not pattern_match:
+            return None
+
+        pattern_name = pattern_match.group(1)
+
+        # Map pattern names to source node IDs using the measurement module's mappings
+        try:
+            from solitaire.storage.identity_measurement import BEHAVIORAL_PATTERNS
+            for bp in BEHAVIORAL_PATTERNS:
+                if bp.name == pattern_name and bp.source_node_ids:
+                    # Try each source node ID until we find an active commitment
+                    for source_id in bp.source_node_ids:
+                        commitment = self._get_active_commitment_for_source(source_id)
+                        if commitment:
+                            return commitment
+        except ImportError:
+            pass
+
+        # Fallback: try keyword matching against active commitments
+        active = self.get_active_commitments()
+        if not active:
+            return None
+
+        # Use simple word overlap
+        signal_words = set(re.findall(r'\b\w{4,}\b', content.lower()))
+        best_match = None
+        best_score = 0
+
+        for commitment in active:
+            commit_words = set(re.findall(r'\b\w{4,}\b', commitment.content.lower()))
+            if not commit_words:
+                continue
+            overlap = len(signal_words & commit_words)
+            if overlap > best_score:
+                best_score = overlap
+                best_match = commitment
+
+        return best_match if best_score >= 2 else None
+
     def _generate_commitment_content(self, source: IdentityNode) -> Tuple[str, Dict]:
         """Generate a commitment's behavioral prompt and signal definition from a source node.
 
