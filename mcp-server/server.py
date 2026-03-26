@@ -41,6 +41,9 @@ _solitaire_root = str(Path(__file__).resolve().parent.parent)
 if _solitaire_root not in sys.path:
     sys.path.insert(0, _solitaire_root)
 
+from solitaire.platform_utils import ensure_utf8
+ensure_utf8()
+
 from mcp.server.fastmcp import FastMCP
 from solitaire import SolitaireEngine
 
