@@ -68,6 +68,7 @@ EXPERIENTIAL_SYNONYMS = {
     "difficult": ["complex", "challenge", "workaround", "hard"],
     # Success / breakthrough
     "breakthrough": ["solved", "fix", "working", "success", "resolved"],
+    "solved": ["fix", "solution", "resolved", "working"],
     "figured out": ["solution", "resolved", "discovery", "realized"],
     "realized": ["corrected", "actually", "discovery", "understood"],
     "eureka": ["solved", "fix", "breakthrough", "working"],
@@ -98,7 +99,7 @@ RETROSPECTIVE_SYNONYMS = {
 #
 # Bridges high-level category queries to the vocabulary entries actually use.
 # Technical synonyms map term → term. Concept maps map *intent* → *vocabulary
-# domain*. When someone asks "What are the user's formatting preferences?", the
+# domain*. When someone asks "What are Philip's formatting preferences?", the
 # word "formatting" never appears in the stored entries. But entries about
 # preferences use words like "instruction", "don't want", "no response
 # requested", "standing rule". The concept map ensures those terms enter the
@@ -111,7 +112,7 @@ RETROSPECTIVE_SYNONYMS = {
 #
 # Design rule: these should be vocabulary patterns, not specific facts.
 # "no response requested" belongs here because it's a vocabulary pattern
-# for the "preferences" concept. "a specific person's name" does NOT belong here because
+# for the "preferences" concept. "Philip Roy" does NOT belong here because
 # it's a specific fact, not a vocabulary domain.
 
 CONCEPT_MAP: Dict[str, List[str]] = {
@@ -143,7 +144,7 @@ CONCEPT_MAP: Dict[str, List[str]] = {
     # Content production
     "content": ["pipeline", "production prompt", "voice profile", "client", "routing", "workflow"],
     "pipeline": ["content", "routing", "production prompt", "voice profile", "prompt", "workflow"],
-    "clients": ["acme corp", "prospect list", "routing", "tier", "voice profile", "content"],
+    "clients": ["neon health", "dream 100", "routing", "tier", "voice profile", "content"],
 }
 
 # Domain / technical synonyms — bidirectional term bridging.
@@ -329,9 +330,9 @@ class QueryExpander:
             "dual license",
             "content pipeline",
             "production prompt",
-            "prospect list",
-            "acme corp",
-            "project status",
+            "dream 100",
+            "neon health",
+            "content ops",
             # Concepts
             "narrative identity",
             "north star",
@@ -363,7 +364,7 @@ class QueryExpander:
         # are still generated alongside, so recall broadens without
         # losing phrase precision.
         #
-        # Fix: 2026-03-17. Addresses Q12 failure: "user formatting
+        # Fix: 2026-03-17. Addresses Q12 failure: "Philip formatting
         # preferences no response requested" was decomposed into
         # individual terms, missing the exact phrase match.
         detected_phrases = self._detect_phrases(lower)
@@ -390,7 +391,7 @@ class QueryExpander:
                         variants.append(combined)
 
         # Step 3.7: Concept-map expansion — bridge category-level queries
-        # to corpus-level vocabulary. "user formatting" → also search
+        # to corpus-level vocabulary. "formatting preferences" → also search
         # for "instruction", "requested", "verbal tic", etc.
         concept_terms = self._expand_concepts(lower)
         if concept_terms:
@@ -407,7 +408,7 @@ class QueryExpander:
 
         # Step 4: Generate entity-focused variant
         # If entities were found, create a variant that's just the entities
-        # This is what makes "the user's analogy about books" findable
+        # This is what makes "Philip's analogy about books" findable
         if entities.all_entities:
             entity_variant = " ".join(entities.all_entities)
             if entity_variant not in variants:

@@ -71,4 +71,4 @@ def hindsight_backfill(ctx, all_entries, dry_run, batch_size):
         )
         output_json(result)
     except Exception as e:
-        output_error(f"hindsight-backfill failed: {e}")
+        output_error(f"Hindsight backfill failed: {e}")

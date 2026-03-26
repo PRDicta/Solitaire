@@ -15,7 +15,7 @@ import hashlib
 import json
 import sqlite3
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import datetime, timezone, timedelta
 from typing import List, Optional, Dict, Any, Tuple
 from pathlib import Path
 
@@ -139,7 +139,7 @@ def scan_for_system_changes(
     Returns:
         List of SystemChangeCandidate objects above the threshold
     """
-    cutoff = (datetime.utcnow() - timedelta(hours=scan_window_hours)).isoformat()
+    cutoff = (datetime.now(timezone.utc) - timedelta(hours=scan_window_hours)).isoformat()
 
     if session_id:
         query = """

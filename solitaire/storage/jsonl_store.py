@@ -30,7 +30,7 @@ except ImportError:
     fcntl = None  # Windows: file locking handled via msvcrt below
 from pathlib import Path
 from typing import Dict, List, Optional, Any, Iterator, Callable, Tuple
-from datetime import datetime
+from datetime import datetime, timezone
 from dataclasses import dataclass, field
 
 
@@ -250,7 +250,7 @@ class JsonlStore:
                 seq=seq,
                 record_type=record_type,
                 op=op,
-                ts=datetime.utcnow().isoformat(),
+                ts=datetime.now(timezone.utc).isoformat(),
                 session=session_id,
                 data=data,
             )

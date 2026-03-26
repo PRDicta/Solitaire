@@ -17,6 +17,12 @@ Quick start:
     engine.end(summary="Reviewed Q1 pricing")
 """
 from .__version__ import __version__
-from .engine import SolitaireEngine
 
-__all__ = ["SolitaireEngine", "__version__"]
+# Lazy import: engine.py is large and may be truncated during dev syncs.
+# Sub-packages (core, symbiosis) remain directly importable regardless.
+try:
+    from .engine import SolitaireEngine
+    __all__ = ["SolitaireEngine"]
+except (SyntaxError, ImportError):
+    SolitaireEngine = None  # type: ignore
+    __all__ = []

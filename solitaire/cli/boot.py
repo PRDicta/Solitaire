@@ -39,5 +39,5 @@ def boot(ctx, pre_persona, persona_key, resume, intent, cold):
         )
         return
 
-    result = engine.boot(persona_key=persona_key, intent=intent, cold=cold)
+    result = engine.boot(persona_key=persona_key, intent=intent)
     output_json(result)

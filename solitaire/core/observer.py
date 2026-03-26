@@ -172,7 +172,7 @@ def _days_ago(dt: Optional[datetime], now: Optional[datetime] = None) -> Optiona
     if not dt:
         return None
     if now is None:
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
     delta = now - dt
     return delta.days
 
@@ -259,7 +259,7 @@ def _detect_stale_threads(
     Returns: Observation or None if no stale thread found.
     """
     if now is None:
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
 
     stale_candidates = []
 
@@ -331,7 +331,7 @@ def _detect_absence(
     Returns: Observation or None if no absence detected.
     """
     if now is None:
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
 
     cutoff_old = now - timedelta(days=14)
     cutoff_recent = now - timedelta(days=7)

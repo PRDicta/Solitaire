@@ -24,7 +24,7 @@ import json
 import os
 import sys
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -453,7 +453,7 @@ class SolitaireEngine:
             return {
                 "status": "ok",
                 "session_id": self._session_id,
-                "timestamp": datetime.utcnow().isoformat(),
+                "timestamp": datetime.now(timezone.utc).isoformat(),
             }
         except Exception as e:
             return {"status": "error", "error": str(e)}
@@ -753,7 +753,7 @@ class SolitaireEngine:
 
             if last_ingest:
                 last_dt = datetime.fromisoformat(last_ingest)
-                idle_delta = datetime.utcnow() - last_dt
+                idle_delta = datetime.now(timezone.utc) - last_dt
                 idle_minutes = idle_delta.total_seconds() / 60.0
                 result["idle_minutes"] = round(idle_minutes, 1)
                 result["needs_sweep"] = idle_minutes >= IDLE_SWEEP_MINUTES
@@ -869,7 +869,7 @@ class SolitaireEngine:
         conn.execute(
             """INSERT OR REPLACE INTO user_profile (key, value, updated_at)
                VALUES (?, ?, ?)""",
-            (key, value, datetime.utcnow().isoformat()),
+            (key, value, datetime.now(timezone.utc).isoformat()),
         )
         conn.commit()
         return {"profile_set": key, "value": value}
@@ -1495,7 +1495,7 @@ class SolitaireEngine:
                 try:
                     from datetime import timedelta
                     last_dt = datetime.fromisoformat(state.last_reflection_at)
-                    if datetime.utcnow() - last_dt < timedelta(minutes=120):
+                    if datetime.now(timezone.utc) - last_dt < timedelta(minutes=120):
                         return {
                             "status": "skipped",
                             "reason": "cooldown",
@@ -2050,7 +2050,7 @@ class SolitaireEngine:
         self._session_data = {
             "session_id": self._session_id,
             "persona_key": persona_key,
-            "started_at": datetime.utcnow().isoformat(),
+            "started_at": datetime.now(timezone.utc).isoformat(),
             "turn_count": 0,
         }
         try:
@@ -2087,48 +2087,5 @@ class SolitaireEngine:
                     "identity": profile.get("identity", {}),
                     "effective_traits": profile.get("effective_traits", {}),
                 }
-        return {"identity": {"name": self._persona_key or "default"}, "effective_traits": {}}
-
-    # ─── Internal: Utilities ──────────────────────────────────────────────
-
-    def _ensure_booted(self, method: str) -> None:
-        """Raise if the engine hasn't been booted yet."""
-        if not self._booted or not self._lib:
-            raise RuntimeError(
-                f"SolitaireEngine.{method}() called before boot(). "
-                "Call engine.boot(persona_key='...') first."
-            )
-
-    def _get_event_loop(self) -> asyncio.AbstractEventLoop:
-        """Get or create an event loop for running async internals."""
-        try:
-            loop = asyncio.get_event_loop()
-            if loop.is_closed():
-                raise RuntimeError
-        except RuntimeError:
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-        return loop
-
-    def _run_async(self, coro):
-        """Run an async coroutine from sync code, handling already-running loops.
-
-        If no event loop is running, uses loop.run_until_complete().
-        If a loop is already running (e.g. inside an agent framework),
-        applies nest_asyncio to allow nested run_until_complete calls.
-        """
-        loop = self._get_event_loop()
-        if loop.is_running():
-            # We're inside an async host (agent SDK, Jupyter, etc.).
-            # nest_asyncio patches the loop to allow nested calls.
-            try:
-                import nest_asyncio
-                nest_asyncio.apply(loop)
-            except ImportError:
-                raise RuntimeError(
-                    "Cannot run sync engine methods inside an already-running "
-                    "event loop without nest_asyncio installed. Either install "
-                    "nest_asyncio (`pip install nest_asyncio`) or use the async "
-                    "TheLibrarian methods directly."
-                )
-        return loop.run_until_complete(coro)
+            return {}
+        return {}

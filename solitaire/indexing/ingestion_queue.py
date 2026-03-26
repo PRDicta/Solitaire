@@ -18,7 +18,7 @@ import uuid
 import json
 from dataclasses import dataclass, field
 from typing import List, Dict, Optional, Callable, Awaitable, Any
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
 
 from ..core.types import (
@@ -45,7 +45,7 @@ class IngestionTask:
     conversation_id: str = ""
     turn_number: int = 0
     status: TaskStatus = TaskStatus.PENDING
-    created_at: datetime = field(default_factory=datetime.utcnow)
+    created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     completed_at: Optional[datetime] = None
     error: Optional[str] = None
 
@@ -107,21 +107,12 @@ class IngestionQueue:
             for i in range(self._num_workers)
         ]
 
-    async def shutdown(self, drain_timeout: float = 30.0) -> None:
-        """Graceful shutdown: drain pending tasks, then stop workers.
-
-        Drains the queue before signalling workers to exit, so that
-        enqueued enrichment work is not silently dropped.
-        """
-        # Resume if paused so workers can process remaining tasks
-        self._paused.set()
-        # Wait for the queue to drain (workers keep running)
-        try:
-            await asyncio.wait_for(self._queue.join(), timeout=drain_timeout)
-        except asyncio.TimeoutError:
-            pass  # Best-effort drain; proceed with shutdown
-        # Now stop workers via poison pills
+    async def shutdown(self) -> None:
+        """Graceful shutdown: finish current tasks, cancel workers."""
         self._running = False
+        # Resume if paused so workers can exit
+        self._paused.set()
+        # Send poison pills
         for _ in self._workers:
             try:
                 self._queue.put_nowait(None)
@@ -223,7 +214,7 @@ class IngestionQueue:
                     if self._enrichment_fn:
                         await self._enrichment_fn(task)
                     task.status = TaskStatus.COMPLETED
-                    task.completed_at = datetime.utcnow()
+                    task.completed_at = datetime.now(timezone.utc)
                     self._completed_count += 1
                 except Exception as e:
                     task.status = TaskStatus.FAILED

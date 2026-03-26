@@ -16,7 +16,7 @@ Dump/rebuild follows the same SQL-text pattern for FUSE compatibility.
 import json
 import sqlite3
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import List, Optional, Dict, Tuple
 from dataclasses import dataclass, field
 from enum import Enum
@@ -294,7 +294,7 @@ class IdentityGraph:
         """Insert a new identity node. Returns the node ID."""
         if not node.id:
             node.id = f"idn_{uuid.uuid4().hex[:12]}"
-        now = datetime.utcnow().isoformat()
+        now = datetime.now(timezone.utc).isoformat()
         if not node.first_seen:
             node.first_seen = now
         if not node.last_seen:
@@ -372,7 +372,7 @@ class IdentityGraph:
 
     def get_recent_realizations(self, days: int = 30, limit: int = 10) -> List[IdentityNode]:
         """Fetch realizations from the last N days."""
-        cutoff = datetime.utcnow().isoformat()  # Will compare as string
+        cutoff = datetime.now(timezone.utc).isoformat()  # Will compare as string
         rows = self.conn.execute(
             """SELECT * FROM identity_nodes
                WHERE node_type = 'realization'
@@ -405,7 +405,7 @@ class IdentityGraph:
 
     def reinforce_node(self, node_id: str, session_ref: Optional[str] = None) -> bool:
         """Increment observation count and update last_seen. Returns True if node exists."""
-        now = datetime.utcnow().isoformat()
+        now = datetime.now(timezone.utc).isoformat()
         result = self.conn.execute(
             """UPDATE identity_nodes
                SET observation_count = observation_count + 1,
@@ -424,7 +424,7 @@ class IdentityGraph:
 
     def update_node_status(self, node_id: str, status: str) -> bool:
         """Update a node's status field."""
-        now = datetime.utcnow().isoformat()
+        now = datetime.now(timezone.utc).isoformat()
         result = self.conn.execute(
             """UPDATE identity_nodes SET status = ?, updated_at = ? WHERE id = ?""",
             (status, now, node_id)
@@ -438,7 +438,7 @@ class IdentityGraph:
 
     def update_node_trajectory(self, node_id: str, trajectory: str) -> bool:
         """Update a pattern's trajectory."""
-        now = datetime.utcnow().isoformat()
+        now = datetime.now(timezone.utc).isoformat()
         result = self.conn.execute(
             """UPDATE identity_nodes SET trajectory = ?, updated_at = ? WHERE id = ?""",
             (trajectory, now, node_id)
@@ -457,7 +457,7 @@ class IdentityGraph:
         if not edge.id:
             edge.id = f"ide_{uuid.uuid4().hex[:12]}"
         if not edge.created_at:
-            edge.created_at = datetime.utcnow().isoformat()
+            edge.created_at = datetime.now(timezone.utc).isoformat()
 
         self.conn.execute(
             """INSERT OR REPLACE INTO identity_edges
@@ -500,7 +500,7 @@ class IdentityGraph:
         if not candidate.id:
             candidate.id = f"idc_{uuid.uuid4().hex[:12]}"
         if not candidate.created_at:
-            candidate.created_at = datetime.utcnow().isoformat()
+            candidate.created_at = datetime.now(timezone.utc).isoformat()
 
         self.conn.execute(
             """INSERT INTO identity_candidates
@@ -550,7 +550,7 @@ class IdentityGraph:
         if not row:
             return None
 
-        now = datetime.utcnow().isoformat()
+        now = datetime.now(timezone.utc).isoformat()
         is_core = self._classify_core(row["content"], row["node_type"])
         node = IdentityNode(
             id=f"idn_{uuid.uuid4().hex[:12]}",
@@ -593,7 +593,7 @@ class IdentityGraph:
     def add_reference(self, ref: IdentityReference) -> None:
         """Add a cross-reference from an identity node to another system."""
         if not ref.created_at:
-            ref.created_at = datetime.utcnow().isoformat()
+            ref.created_at = datetime.now(timezone.utc).isoformat()
         self.conn.execute(
             """INSERT INTO identity_references
                (identity_node_id, ref_type, ref_id, created_at)
@@ -629,7 +629,7 @@ class IdentityGraph:
         if not signal.id:
             signal.id = f"ids_{uuid.uuid4().hex[:12]}"
         if not signal.created_at:
-            signal.created_at = datetime.utcnow().isoformat()
+            signal.created_at = datetime.now(timezone.utc).isoformat()
 
         self.conn.execute(
             """INSERT OR REPLACE INTO identity_signals
@@ -732,7 +732,7 @@ class IdentityGraph:
 
     def update_node_metadata(self, node_id: str, metadata: Dict) -> bool:
         """Replace a node's metadata dict."""
-        now = datetime.utcnow().isoformat()
+        now = datetime.now(timezone.utc).isoformat()
         result = self.conn.execute(
             """UPDATE identity_nodes SET metadata = ?, updated_at = ? WHERE id = ?""",
             (json.dumps(metadata), now, node_id)
@@ -746,7 +746,7 @@ class IdentityGraph:
 
     def update_node_content(self, node_id: str, content: str) -> bool:
         """Update a node's content text."""
-        now = datetime.utcnow().isoformat()
+        now = datetime.now(timezone.utc).isoformat()
         result = self.conn.execute(
             """UPDATE identity_nodes SET content = ?, updated_at = ? WHERE id = ?""",
             (content, now, node_id)
@@ -760,7 +760,7 @@ class IdentityGraph:
 
     def update_node_type(self, node_id: str, node_type: str) -> bool:
         """Change a node's type (e.g., realization -> motivation during promotion)."""
-        now = datetime.utcnow().isoformat()
+        now = datetime.now(timezone.utc).isoformat()
         result = self.conn.execute(
             """UPDATE identity_nodes SET node_type = ?, updated_at = ? WHERE id = ?""",
             (node_type, now, node_id)
@@ -1042,7 +1042,7 @@ class IdentityGraph:
     def get_recent_tensions(self, days: int = 7, limit: int = 5) -> List[IdentityNode]:
         """Fetch open tensions with activity in the last N days."""
         from datetime import timedelta
-        cutoff = (datetime.utcnow() - timedelta(days=days)).isoformat()
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
         rows = self.conn.execute(
             """SELECT * FROM identity_nodes
                WHERE node_type = 'tension'
@@ -1548,7 +1548,7 @@ class IdentityGraph:
         cal["self_report_weight"] = blended
         cal["last_calibration_accuracy"] = accuracy
         cal["last_calibration_samples"] = sample_size
-        cal["last_calibration_at"] = datetime.utcnow().isoformat()
+        cal["last_calibration_at"] = datetime.now(timezone.utc).isoformat()
         self._set_calibration(cal)
 
         return {
@@ -1575,7 +1575,7 @@ class IdentityGraph:
 
     def _set_calibration(self, cal: Dict):
         """Write calibration state to the sentinel node (upsert)."""
-        now = datetime.utcnow().isoformat()
+        now = datetime.now(timezone.utc).isoformat()
         meta_json = json.dumps(cal)
         existing = self.conn.execute(
             "SELECT id FROM identity_nodes WHERE id = ?",
@@ -1707,7 +1707,7 @@ class IdentityGraph:
         selected = candidates[:3]
 
         # ── Step 4: Create commitment nodes ──────────────────────────────
-        now = datetime.utcnow().isoformat()
+        now = datetime.now(timezone.utc).isoformat()
         new_commitments = []
 
         for source in selected:

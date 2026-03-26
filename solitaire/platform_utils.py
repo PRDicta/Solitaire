@@ -1,5 +1,5 @@
 """
-Solitaire -- Cross-Platform Utilities
+The Librarian — Cross-Platform Utilities
 
 Centralizes all platform-specific logic so the rest of the codebase
 can stay platform-agnostic. Covers:
@@ -29,37 +29,37 @@ def get_system() -> str:
 
 
 def get_install_base_dir() -> str:
-    """Return the platform-appropriate base install directory for Solitaire.
+    """Return the platform-appropriate base install directory for The Librarian.
 
-    - Windows: %LOCALAPPDATA%\\Solitaire
-    - macOS:   ~/Library/Application Support/Solitaire
-    - Linux:   ~/.local/share/Solitaire
+    - Windows: %LOCALAPPDATA%\\The Librarian
+    - macOS:   ~/Library/Application Support/The Librarian
+    - Linux:   ~/.local/share/The Librarian
     """
     system = get_system()
     if system == "windows":
         local_app_data = os.environ.get("LOCALAPPDATA", "")
         if not local_app_data:
             local_app_data = os.path.join(os.path.expanduser("~"), "AppData", "Local")
-        return os.path.join(local_app_data, "Solitaire")
+        return os.path.join(local_app_data, "The Librarian")
     elif system == "darwin":
         return os.path.join(
             os.path.expanduser("~"),
-            "Library", "Application Support", "Solitaire"
+            "Library", "Application Support", "The Librarian"
         )
     else:
         return os.path.join(
             os.path.expanduser("~"),
-            ".local", "share", "Solitaire"
+            ".local", "share", "The Librarian"
         )
 
 
 def get_cli_executable_name() -> str:
     """Return the CLI executable filename.
 
-    - Windows: solitaire.exe
-    - macOS/Linux: solitaire
+    - Windows: librarian.exe
+    - macOS/Linux: librarian
     """
-    return "solitaire.exe" if get_system() == "windows" else "solitaire"
+    return "librarian.exe" if get_system() == "windows" else "librarian"
 
 
 def get_gui_font() -> Tuple[str, int]:
@@ -120,7 +120,7 @@ def _add_to_path_macos(bin_dir: str) -> None:
         os.path.expanduser("~/.bash_profile"),
     ]
     export_line = f'export PATH="{bin_dir}:$PATH"'
-    marker = "# Added by Solitaire"
+    marker = "# Added by The Librarian"
 
     for config in shell_configs:
         _append_to_shell_config(config, export_line, marker)
@@ -133,7 +133,7 @@ def _add_to_path_linux(bin_dir: str) -> None:
         os.path.expanduser("~/.profile"),
     ]
     export_line = f'export PATH="{bin_dir}:$PATH"'
-    marker = "# Added by Solitaire"
+    marker = "# Added by The Librarian"
 
     for config in shell_configs:
         _append_to_shell_config(config, export_line, marker)
@@ -147,7 +147,7 @@ def _append_to_shell_config(config_path: str, export_line: str, marker: str) -> 
             with open(config_path, "r") as f:
                 existing = f.read()
 
-        # Already present -- nothing to do
+        # Already present — nothing to do
         if export_line in existing:
             return
 
@@ -157,4 +157,4 @@ def _append_to_shell_config(config_path: str, export_line: str, marker: str) -> 
                 f.write("\n")
             f.write(f"\n{marker}\n{export_line}\n")
     except Exception:
-        pass  # Best-effort -- Cowork doesn't need PATH setup
+        pass  # Best-effort — Cowork doesn't need PATH setup

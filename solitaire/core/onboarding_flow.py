@@ -18,7 +18,7 @@ import os
 import re
 from copy import deepcopy
 from dataclasses import dataclass, field, asdict
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, List, Optional, Any, Tuple
 
@@ -47,9 +47,58 @@ from .persona import (
 
 # ─── Constants ──────────────────────────────────────────────────────────────
 
-FLOW_VERSION = "2.0"
+FLOW_VERSION = "2.1"
 
 STEP_TYPES = {"info", "question", "multiple_choice", "preview", "confirm"}
+
+# ─── First-Message Classification ────────────────────────────────────────────
+# Patterns that indicate the user's first message is a real task, not a greeting
+# or willingness to set up. These users should get help first, onboarding later.
+
+GREETING_PATTERNS = [
+    r'^h(i|ey|ello|owdy)\b',
+    r'^(good\s+)?(morning|afternoon|evening)\b',
+    r'^(what\'?s?\s+up|sup)\b',
+    r'^yo\b',
+]
+
+TASK_SIGNALS = [
+    r'\?$',                         # ends with question mark
+    r'```',                         # contains code block
+    r'\b(fix|debug|help|solve|build|create|write|analyze|review|explain)\b',
+    r'\b(error|bug|issue|problem|broken)\b',
+    r'\b(how\s+(do|can|should|would))\b',
+    r'\b(can\s+you|could\s+you|please)\b',
+    r'\b(i\s+need|i\s+want|i\'m\s+trying)\b',
+]
+
+# ─── Vague Intent Detection ─────────────────────────────────────────────────
+# Phrases that signal the user doesn't have a clear use case yet.
+
+VAGUE_INTENT_PHRASES = [
+    r'^(just\s+)?(help|stuff|things|idk|dunno|whatever)',
+    r'^(i\s+don\'?t\s+know)',
+    r'^(anything|everything|general)',
+    r'^(not\s+sure)',
+    r'^(just\s+trying\s+(it|this)\s+out)',
+]
+
+INTENT_CATEGORY_PICKER = [
+    {"key": "writing", "label": "Writing and content creation",
+     "intent_seed": "writing and content creation"},
+    {"key": "work", "label": "Work and business tasks",
+     "intent_seed": "business operations and work tasks"},
+    {"key": "creative", "label": "Creative projects (design, art, music)",
+     "intent_seed": "creative projects and design"},
+    {"key": "coding", "label": "Coding and engineering",
+     "intent_seed": "software engineering and coding"},
+    {"key": "learning", "label": "Learning and research",
+     "intent_seed": "learning and research"},
+    {"key": "personal", "label": "Personal organization and life admin",
+     "intent_seed": "personal organization and productivity"},
+    {"key": "other", "label": "Something else (I'll describe it)",
+     "intent_seed": ""},
+]
 
 # Maximum aggregate delta per trait from working style preferences
 WORKING_STYLE_MAX_DELTA = 0.15
@@ -227,7 +276,7 @@ SEED_QUESTIONS = [
     {
         "id": "user_name",
         "prompt": "What's your name?",
-        "placeholder": "e.g., Alex",
+        "placeholder": "e.g., Philip",
         "required": False,
         "knowledge_template": "{name} is the user's name.",
     },
@@ -323,6 +372,7 @@ class OnboardingContext:
     # Flow state
     current_step: str = "welcome"
     completed_steps: List[str] = field(default_factory=list)
+    deferred: bool = False  # True when onboarding was deferred for a task-first user
 
     # User inputs
     user_intent: str = ""
@@ -388,6 +438,78 @@ class FlowEngine:
         """
         self.interview = InterviewEngine(include_optional=False)
 
+    # ─── First-Message Classification (Critical 1) ───────────────────
+
+    @staticmethod
+    def classify_first_message(message: str) -> str:
+        """Classify a user's first message to determine onboarding strategy.
+
+        Returns:
+            "task"        - User has a real task. Help first, onboard later.
+            "greeting"    - Casual greeting. Proceed with onboarding.
+            "setup_ready" - Substantive but not task-urgent. Proceed with onboarding.
+        """
+        if not message or not message.strip():
+            return "setup_ready"
+
+        msg = message.strip()
+        msg_lower = msg.lower()
+
+        # Check greetings first (short messages that are just hellos)
+        if len(msg.split()) <= 5:
+            for pattern in GREETING_PATTERNS:
+                if re.search(pattern, msg_lower):
+                    return "greeting"
+
+        # Check task signals
+        task_hits = 0
+        for pattern in TASK_SIGNALS:
+            if re.search(pattern, msg_lower if '?' not in pattern else msg):
+                task_hits += 1
+
+        # Strong task signal: 2+ indicators, or the message is long (>30 words)
+        # and contains at least one task indicator
+        word_count = len(msg.split())
+        if task_hits >= 2:
+            return "task"
+        if task_hits >= 1 and word_count > 30:
+            return "task"
+
+        # Long messages without task signals are still probably substantive
+        if word_count > 50:
+            return "task"
+
+        return "setup_ready"
+
+    @staticmethod
+    def _is_vague_intent(intent: str) -> bool:
+        """Check if a user's stated intent is too vague for useful research.
+
+        Returns True if the intent matches vague patterns or has fewer
+        than 3 meaningful words after stripping filler.
+        """
+        if not intent:
+            return True
+
+        intent_lower = intent.strip().lower()
+
+        # Check against known vague phrases
+        for pattern in VAGUE_INTENT_PHRASES:
+            if re.search(pattern, intent_lower):
+                return True
+
+        # Strip common filler words and check remaining word count
+        filler = {
+            "i", "me", "my", "just", "like", "with", "some", "a", "an",
+            "the", "to", "for", "and", "or", "do", "can", "want", "need",
+            "stuff", "things", "help", "use", "it", "be",
+        }
+        words = [w for w in re.findall(r'\w+', intent_lower) if w not in filler]
+        if len(words) < 2:
+            return True
+
+        return False
+
     # ─── Step Builders ───────────────────────────────────────────────
 
     def _build_welcome(self, ctx: OnboardingContext) -> OnboardingStep:
@@ -395,17 +517,21 @@ class FlowEngine:
             step_id="welcome",
             step_type="info",
             title="Welcome to Solitaire",
-            description="Let's build your personal AI cognitive profile.",
+            description="Let's set up your AI partner.",
             content=(
-                "Solitaire is a persistent memory layer with a personality "
-                "tuned to how you work. It remembers your preferences, learns "
-                "from every conversation, and adapts over time.\n\n"
-                "We'll build a custom profile based on what you tell me. "
-                "This takes 2-5 minutes, and you can skip any step."
+                "I'm an AI partner that learns how you work and gets better "
+                "over time. Everything you tell me is stored locally on your "
+                "machine.\n\n"
+                "We'll build a profile based on what you tell me. "
+                "This takes 2-3 minutes, and you can skip any step. "
+                'Or say "just get me started" to jump straight in.'
             ),
             expected_input_type="none",
             next_steps="intent_capture",
-            metadata={"auto_advance": True},
+            metadata={
+                "auto_advance": True,
+                "quickstart_available": True,
+            },
         )
 
     def _build_intent_capture(self, ctx: OnboardingContext) -> OnboardingStep:
@@ -427,6 +553,57 @@ class FlowEngine:
             },
             expected_input_type="text",
             next_steps="live_research",
+        )
+
+    def _build_intent_followup(self, ctx: OnboardingContext) -> OnboardingStep:
+        """When intent is vague, offer a category picker instead of useless research."""
+        return OnboardingStep(
+            step_id="intent_followup",
+            step_type="multiple_choice",
+            title="Can you narrow it down?",
+            description=(
+                "That's a bit broad for me to build a useful profile. "
+                "Pick the closest category and I'll tune from there."
+            ),
+            content={
+                "prompt": "What's the closest match?",
+                "options": [
+                    {"key": cat["key"], "label": cat["label"]}
+                    for cat in INTENT_CATEGORY_PICKER
+                ],
+            },
+            expected_input_type="choice_key",
+            next_steps="live_research",
+            metadata={"skippable": True},
+        )
+
+    def _build_deferred_prompt(self, ctx: OnboardingContext) -> OnboardingStep:
+        """Prompt for deferred onboarding, shown after a few sessions.
+
+        The agent triggers this when it detects a returning user who
+        was deferred on first run and has now completed 2+ sessions.
+        """
+        return OnboardingStep(
+            step_id="deferred_prompt",
+            step_type="multiple_choice",
+            title="Set Up Your Profile",
+            description=(
+                "I've been learning from our conversations. "
+                "Want to set up a profile so I can tune my style to you?"
+            ),
+            content={
+                "prompt": "This takes 2-3 minutes and makes me noticeably better.",
+                "options": [
+                    {"key": "yes", "label": "Sure, let's do it"},
+                    {"key": "later", "label": "Not now"},
+                ],
+            },
+            expected_input_type="choice_key",
+            next_steps={
+                "yes": "intent_capture",
+                "later": "cancelled",
+            },
+            metadata={"deferred_onboarding": True},
         )
 
     def _build_live_research(self, ctx: OnboardingContext) -> OnboardingStep:
@@ -470,13 +647,44 @@ class FlowEngine:
             )
 
     def _build_trait_proposal(self, ctx: OnboardingContext) -> OnboardingStep:
-        """Show the researched trait profile for acceptance or tweaking."""
+        """Show the researched trait profile for acceptance or tweaking.
+
+        If research confidence is below 0.3 (all-moderate defaults from vague
+        intent), skip the trait card entirely. An all-moderate card communicates
+        nothing and wastes the user's time. Go straight to working_style and
+        let the system calibrate from real use.
+        """
         research = ctx.research_result or {}
         traits = research.get("inferred_traits", dict(DEFAULT_TRAITS))
         source = research.get("research_source", "default")
         summary = research.get("research_summary", "")
         confidence = research.get("confidence", 0.0)
         conviction_seeds = research.get("conviction_seeds", [])
+
+        # Low-confidence skip: all-moderate card is meaningless
+        if confidence < 0.3:
+            ctx.baseline_traits = traits
+            return OnboardingStep(
+                step_id="trait_proposal",
+                step_type="info",
+                title="Profile Calibration",
+                description=(
+                    "I don't have enough signal to build a useful profile yet. "
+                    "I'll start with balanced defaults and calibrate as we work together."
+                ),
+                content={
+                    "status": "low_confidence_skip",
+                    "confidence": confidence,
+                    "message": (
+                        "Your working style preferences (next step) will give me "
+                        "the first useful signal. After a few sessions, I'll tune "
+                        "further from how you actually work."
+                    ),
+                },
+                expected_input_type="none",
+                next_steps="working_style",
+                metadata={"auto_advance": True, "low_confidence": True},
+            )
 
         trait_display = {}
         for t in VALID_TRAIT_NAMES:
@@ -640,6 +848,10 @@ class FlowEngine:
                 "total_questions": total,
                 "affects_traits": question.affects,
                 "can_skip": not question.required,
+                "skip_options": [
+                    {"key": "skip", "label": "Skip this question"},
+                    {"key": "skip_rest", "label": "Skip remaining questions"},
+                ],
             },
         )
 
@@ -898,6 +1110,10 @@ class FlowEngine:
             return self._build_welcome(ctx)
         elif step_id == "intent_capture":
             return self._build_intent_capture(ctx)
+        elif step_id == "intent_followup":
+            return self._build_intent_followup(ctx)
+        elif step_id == "deferred_prompt":
+            return self._build_deferred_prompt(ctx)
         elif step_id == "live_research":
             return self._build_live_research(ctx)
         elif step_id == "trait_proposal":
@@ -952,9 +1168,34 @@ class FlowEngine:
         """Process user input for a step and advance context."""
         ctx.mark_step_completed(step_id)
 
+        input_str = str(input_data).strip()
+
         # Cancel from any step
-        if str(input_data).strip() == "cancel":
+        if input_str == "cancel":
             ctx.current_step = "cancelled"
+            return ctx
+
+        # ─── Critical 3: Global quickstart from any step ─────────────
+        # "quickstart" jumps straight to apply with sensible defaults.
+        # Auto-names from intent if available, otherwise "Partner".
+        if input_str == "quickstart" and step_id not in ("apply", "cancelled", "confirm"):
+            if not ctx.persona_name:
+                ctx.persona_name = self._suggest_name(ctx.user_intent) if ctx.user_intent else "Partner"
+                ctx.persona_key = self._slugify(ctx.persona_name)
+            if not ctx.baseline_traits:
+                if ctx.user_intent:
+                    result = self.run_heuristic_research(ctx.user_intent)
+                    ctx.research_result = result.to_dict()
+                    ctx.baseline_traits = result.inferred_traits
+                    ctx.domain_config = {
+                        "primary": result.primary_domain,
+                        "secondary": result.secondary_domains,
+                        "excluded": result.excluded_domains,
+                    }
+                else:
+                    ctx.baseline_traits = dict(DEFAULT_TRAITS)
+            ctx = self._generate_persona(ctx)
+            ctx.current_step = "apply"
             return ctx
 
         if step_id == "welcome":
@@ -962,7 +1203,37 @@ class FlowEngine:
 
         elif step_id == "intent_capture":
             ctx.user_intent = str(input_data).strip()
-            ctx.current_step = "live_research"
+            # ─── Critical 2: Vague intent detection ──────────────────
+            if self._is_vague_intent(ctx.user_intent):
+                ctx.current_step = "intent_followup"
+            else:
+                ctx.current_step = "live_research"
+
+        elif step_id == "intent_followup":
+            # Category picker response
+            choice = input_str
+            if choice == "skip":
+                ctx.current_step = "live_research"
+            elif choice == "other":
+                # Send back to intent_capture for a second try
+                ctx.completed_steps = [
+                    s for s in ctx.completed_steps if s != "intent_capture"
+                ]
+                ctx.current_step = "intent_capture"
+            else:
+                # Map category key to intent seed
+                for cat in INTENT_CATEGORY_PICKER:
+                    if cat["key"] == choice:
+                        ctx.user_intent = cat["intent_seed"]
+                        break
+                ctx.current_step = "live_research"
+
+        elif step_id == "deferred_prompt":
+            choice = input_str
+            if choice == "yes":
+                ctx.current_step = "intent_capture"
+            else:
+                ctx.current_step = "cancelled"
 
         elif step_id == "live_research":
             # Research result should be set on ctx before calling process_input.
@@ -991,7 +1262,8 @@ class FlowEngine:
 
         elif step_id == "trait_proposal":
             choice = str(input_data).strip()
-            if choice == "accept":
+            if choice == "accept" or choice == "auto_advance":
+                # auto_advance covers the low-confidence skip path
                 ctx.current_step = "working_style"
             elif choice == "tweak":
                 ctx.current_step = "trait_tweak"
@@ -1028,16 +1300,28 @@ class FlowEngine:
 
         elif step_id.startswith("interview_"):
             q_id = step_id.replace("interview_", "")
-            answer_key = str(input_data).strip().upper()
-            ctx.interview_answers[q_id] = answer_key
-            ctx.trait_deltas = self.interview.compute_trait_deltas(
-                ctx.interview_answers
-            )
-            next_q = self._next_interview_question_id(q_id)
-            if next_q:
-                ctx.current_step = f"interview_{next_q}"
-            else:
+            answer_key = str(input_data).strip()
+
+            if answer_key.lower() == "skip_rest":
+                # Skip all remaining interview questions
                 ctx.current_step = "naming"
+            elif answer_key.lower() == "skip":
+                # Skip this question only, advance to next
+                next_q = self._next_interview_question_id(q_id)
+                if next_q:
+                    ctx.current_step = f"interview_{next_q}"
+                else:
+                    ctx.current_step = "naming"
+            else:
+                ctx.interview_answers[q_id] = answer_key.upper()
+                ctx.trait_deltas = self.interview.compute_trait_deltas(
+                    ctx.interview_answers
+                )
+                next_q = self._next_interview_question_id(q_id)
+                if next_q:
+                    ctx.current_step = f"interview_{next_q}"
+                else:
+                    ctx.current_step = "naming"
 
         elif step_id == "naming":
             name = str(input_data).strip()
@@ -1250,7 +1534,7 @@ class FlowEngine:
         if ctx.research_result:
             conviction_seeds = ctx.research_result.get("conviction_seeds", [])
 
-        now = datetime.utcnow().strftime("%Y-%m-%d")
+        now = datetime.now(timezone.utc).strftime("%Y-%m-%d")
         ctx.generated_persona = {
             "schema_version": "1.0",
             "identity": {
@@ -1707,9 +1991,12 @@ def build_onboarding_payload(templates_dir: str = None) -> Dict[str, Any]:
             ],
             "optional_steps": [
                 "working_style", "interview", "north_star",
-                "seed_questions",
+                "seed_questions", "intent_followup",
             ],
             "interview_questions": 5,
             "template_free": True,
+            "quickstart_available": True,
+            "deferred_onboarding_available": True,
+            "classify_first_message": True,
         },
     }

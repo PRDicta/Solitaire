@@ -12,7 +12,7 @@ Design: operates on the IdentityGraph directly. No LLM call. Returns a
 structured report for inclusion in the session end output.
 """
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Dict, List, Optional, Tuple
 from dataclasses import dataclass, field
 
@@ -457,7 +457,7 @@ class IdentityReflector:
 
             # Mark as evaluated (double-count prevention for boot-time retro)
             meta = commitment.metadata or {}
-            meta["evaluated_at"] = datetime.utcnow().isoformat()
+            meta["evaluated_at"] = datetime.now(timezone.utc).isoformat()
             meta["evaluated_by"] = "explicit_reflection"
             self.ig.update_node_metadata(commitment.id, meta)
 

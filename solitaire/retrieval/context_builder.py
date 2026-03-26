@@ -98,11 +98,11 @@ class ContextBuilder:
         if created is None:
             return ""
         try:
-            now = datetime.utcnow()
+            now = datetime.now(timezone.utc)
             if hasattr(created, "timestamp"):
                 age_seconds = (now - created).total_seconds()
             else:
-                age_seconds = (now - datetime.utcfromtimestamp(float(created))).total_seconds()
+                age_seconds = (now - datetime.fromtimestamp(float(created, tz=timezone.utc))).total_seconds()
 
             if age_seconds < 0:
                 return ""

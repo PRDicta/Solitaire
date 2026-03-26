@@ -1,5 +1,5 @@
 """
-Solitaire -- Confidence Scoring (Hindsight-inspired)
+The Librarian -- Confidence Scoring (Hindsight-inspired)
 
 Unified confidence contract for all entry types. Implements:
 
@@ -23,7 +23,7 @@ framework, simplified for a non-ML pipeline.
 
 import math
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional, Dict, Any
 
 
@@ -32,7 +32,7 @@ from typing import Optional, Dict, Any
 PROVENANCE_AUTHORITY = {
     "user-stated": 1.0,        # User said it directly. Highest trust.
     "system": 0.95,            # System-generated (e.g., boot, enrichment).
-    "assistant-inferred": 0.7, # Assistant inferred it. Reasonable but fallible.
+    "assistant-inferred": 0.7, # Ward inferred it. Reasonable but fallible.
     "unknown": 0.5,            # No provenance. Minimal trust.
 }
 
@@ -124,7 +124,7 @@ def initial_confidence(
         reinforcement_bonus=0.0,
         decay_applied=0.0,
         effective=base,
-        last_reinforced_at=datetime.utcnow().isoformat(),
+        last_reinforced_at=datetime.now(timezone.utc).isoformat(),
     )
 
 
@@ -143,7 +143,7 @@ def reinforce(
     can reach 0.8 effective with enough reinforcement (0.5 base + 0.3 bonus).
     """
     if now is None:
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
 
     new_count = score.reinforcement_count + 1
     # Logarithmic bonus: diminishing returns, capped at 0.3
@@ -223,8 +223,11 @@ def extract_confidence_from_metadata(metadata: Dict[str, Any]) -> Optional[Confi
     if conf_data is None:
         return None
     try:
+        if isinstance(conf_data, (int, float)):
+            # Legacy format: confidence stored as a raw number, not a dict
+            return ConfidenceScore(base=float(conf_data))
         return ConfidenceScore.from_dict(conf_data)
-    except (KeyError, ValueError, TypeError):
+    except (KeyError, ValueError, TypeError, AttributeError):
         return None
 
 

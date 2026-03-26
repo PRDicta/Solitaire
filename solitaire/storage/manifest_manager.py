@@ -15,14 +15,13 @@ import json
 import sqlite3
 import time
 from collections import defaultdict
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Dict, List, Optional, Any
 
 from ..core.types import (
     ManifestEntry, ManifestState, RolodexEntry,
     compute_importance_score, estimate_tokens,
 )
-from ..core.memory_weight import extract_weight_from_metadata
 
 
 def _safe_fromisoformat(s):
@@ -106,12 +105,12 @@ class ManifestManager:
         Called on first boot or after invalidation.
         """
         start = time.time()
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
 
         # 1. Census: fetch all active entries with scoring columns
         rows = self.conn.execute(
             """SELECT id, content, access_count, last_accessed, created_at,
-                      tier, category, topic_id, metadata
+                      tier, category, topic_id
                FROM rolodex_entries
                WHERE (superseded_by IS NULL OR superseded_by = '')
                AND category != 'user_knowledge'"""
@@ -120,12 +119,11 @@ class ManifestManager:
         if not rows:
             return self._write_manifest([], "super", 0, {}, now, start)
 
-        # 2. Score everything (with retrieval weight integration)
+        # 2. Score everything
         scored = []
         for r in rows:
             entry = _lightweight_entry(r)
             score = compute_importance_score(entry, now=now)
-            score = _apply_retrieval_weight(score, r["metadata"])
             token_cost = estimate_tokens(r["content"])
             topic_label = self._resolve_topic_label(r["topic_id"])
             scored.append({
@@ -228,13 +226,13 @@ class ManifestManager:
             focus_multiplier: Score multiplier for focused entries (default 3x).
         """
         start = time.time()
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         focus_set = set(focus_topic_ids or [])
 
         # 1. Census: same as super boot
         rows = self.conn.execute(
             """SELECT id, content, access_count, last_accessed, created_at,
-                      tier, category, topic_id, metadata
+                      tier, category, topic_id
                FROM rolodex_entries
                WHERE (superseded_by IS NULL OR superseded_by = '')
                AND category != 'user_knowledge'"""
@@ -243,12 +241,11 @@ class ManifestManager:
         if not rows:
             return self._write_manifest([], "focused", 0, {}, now, start)
 
-        # 2. Score everything, with focus bias and retrieval weight
+        # 2. Score everything, with focus bias
         scored = []
         for r in rows:
             entry = _lightweight_entry(r)
             score = compute_importance_score(entry, now=now)
-            score = _apply_retrieval_weight(score, r["metadata"])
 
             # Apply focus multiplier if entry's topic is in the focus set
             if focus_set and r["topic_id"] in focus_set:
@@ -345,7 +342,7 @@ class ManifestManager:
         compete against lowest-ranked existing entries.
         """
         start = time.time()
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
 
         # Find new entries since manifest was last updated
         rows = self.conn.execute(
@@ -461,7 +458,7 @@ class ManifestManager:
         Called at session close.
         """
         start = time.time()
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
 
         # 1. Access audit: which manifest entries were actually recalled?
         accessed_entry_ids = self._get_accessed_entries(session_id)
@@ -785,40 +782,3 @@ def _lightweight_entry_from_cols(
         ),
         created_at=_safe_fromisoformat(created_at),
     )
-
-
-def _apply_retrieval_weight(score: float, metadata_json: Optional[str]) -> float:
-    """
-    Multiply the base importance score by the retrieval-derived significance weight.
-
-    If the entry has a weight.significance stored in metadata (set by
-    retrieval_feedback.adjust_weights), use it as a multiplier. This causes
-    entries that are consistently used in recall to score higher, and entries
-    that are consistently ignored to score lower.
-
-    The default significance is 0.3 (from MemoryWeight), so we normalize:
-    - significance 0.3 = 1.0x (no change, default)
-    - significance 0.6 = 2.0x (double, high usage)
-    - significance 0.1 = 0.33x (penalized, frequently ignored)
-    - significance 1.0 = 3.33x (maximum boost)
-    """
-    if not metadata_json:
-        return score
-
-    try:
-        metadata = json.loads(metadata_json)
-    except (json.JSONDecodeError, TypeError):
-        return score
-
-    weight = extract_weight_from_metadata(metadata)
-    if not weight:
-        return score
-
-    # Normalize around default significance (0.3)
-    DEFAULT_SIGNIFICANCE = 0.3
-    multiplier = weight.significance / DEFAULT_SIGNIFICANCE
-
-    # Also factor in confidence: low confidence entries score lower
-    multiplier *= weight.confidence
-
-    return score * multiplier

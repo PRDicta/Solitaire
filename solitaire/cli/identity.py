@@ -51,4 +51,4 @@ def identity_stats(ctx):
             "stats": stats,
         })
     except Exception as e:
-        output_error(f"Failed to get identity stats: {e}")
+        output_error(f"Identity stats failed: {e}")

@@ -6,9 +6,16 @@ This is the foundational contract that all components build on.
 from dataclasses import dataclass, field
 from typing import Optional, List, Dict, Any
 from enum import Enum
-from datetime import datetime
+from datetime import datetime, timezone
 import math
 import uuid
+
+
+def _utcnow() -> datetime:
+    """Timezone-aware UTC now, for use as dataclass default_factory."""
+    return datetime.now(timezone.utc)
+
+
 # ─── Enums ───────────────────────────────────────────────────────────────────
 class MessageRole(Enum):
     USER = "user"
@@ -56,13 +63,110 @@ class CompressionStage(Enum):
 class Tier(Enum):
     HOT = "hot"
     COLD = "cold"
+
+
+# ─── Symbiosis Adapter Types ─────────────────────────────────────────────────
+
+class IngestContentType(Enum):
+    """What kind of content an IngestCandidate carries.
+
+    Enum with escape hatch: use OTHER for source systems that produce
+    entry types we haven't seen yet. Those entries still get processed
+    through the generic enrichment path; they just miss type-specific
+    extraction logic until a dedicated handler is added.
+    """
+    FACT = "fact"
+    CONVERSATION = "conversation"
+    DOCUMENT = "document"
+    PREFERENCE = "preference"
+    OTHER = "other"
+
+
+class EnrichmentHint(Enum):
+    """Reader's recommendation for how much enrichment work an entry needs.
+
+    This is advisory, not binding. The pipeline can override: if a "skip"
+    entry turns out to be thin on inspection, enrichment can upgrade it
+    to "partial". The hint lets the pipeline skip redundant work when
+    the source system already did extraction (e.g., importing from
+    another Solitaire instance).
+    """
+    FULL = "full"       # Raw text, needs everything
+    PARTIAL = "partial" # Some structure exists, fill gaps
+    SKIP = "skip"       # Pre-enriched, trust the source
+
+
+@dataclass
+class IngestCandidate:
+    """The choke point of the symbiosis adapter.
+
+    Every reader, regardless of source format, produces IngestCandidates.
+    Every downstream enrichment step consumes them. This is the contract.
+
+    Fields:
+        source_ref:      URI linking back to the original entry in the source
+                         system. Opaque to the pipeline but useful for
+                         provenance ("how do you know that?") and future
+                         inspect views.
+        raw_content:     The entry's text, exactly as the source system stores it.
+        content_type:    Enum classification. Drives type-specific extraction
+                         when available; falls back to generic path for OTHER.
+        enrichment_hint: Reader's recommendation. Pipeline can override.
+        confidence:      0.0-1.0. How much structure the reader could extract.
+                         High for well-structured JSONL, low for raw transcripts.
+                         Enrichment pipeline uses this to decide extraction depth.
+        source_id:       Identifier for the connected source (e.g., "auto-memory",
+                         "chatgpt-export"). Groups candidates by origin.
+        timestamp:       When the original entry was created in the source system.
+                         None if the source doesn't track time.
+        imported_at:     When Solitaire ingested this candidate. Auto-set.
+        metadata:        Bag of source-specific fields the reader wants to preserve.
+                         Not consumed by the pipeline, but stored for provenance.
+        tags:            Tags extracted by the reader, if available.
+        dedup_key:       Optional key for deduplication. If set, the orchestrator
+                         skips entries where this key already exists in the rolodex.
+                         Readers should set this to something stable (e.g., source
+                         file path + content hash) so re-imports are safe.
+    """
+    source_ref: str
+    raw_content: str
+    content_type: IngestContentType = IngestContentType.OTHER
+    enrichment_hint: EnrichmentHint = EnrichmentHint.FULL
+    confidence: float = 0.5
+    source_id: str = ""
+    timestamp: Optional[datetime] = None
+    imported_at: datetime = field(default_factory=_utcnow)
+    metadata: Dict[str, Any] = field(default_factory=dict)
+    tags: List[str] = field(default_factory=list)
+    dedup_key: Optional[str] = None
+
+
+@dataclass
+class ImportResult:
+    """Outcome of a batch import operation."""
+    source_id: str
+    total_candidates: int = 0
+    imported: int = 0
+    skipped_duplicate: int = 0
+    skipped_error: int = 0
+    errors: List[Dict[str, Any]] = field(default_factory=list)
+    entry_ids: List[str] = field(default_factory=list)
+    duration_seconds: float = 0.0
+
+    @property
+    def success_rate(self) -> float:
+        if self.total_candidates == 0:
+            return 0.0
+        return self.imported / self.total_candidates
+
+
 # ─── Core Data Structures ────────────────────────────────────────────────────
 @dataclass
 class Message:
     """A single message in the conversation."""
     role: MessageRole
     content: str
-    timestamp: datetime = field(default_factory=datetime.utcnow)
+    timestamp: datetime = field(default_factory=_utcnow)
     token_count: int = 0
     turn_number: int = 0
     metadata: Dict[str, Any] = field(default_factory=dict)
@@ -84,7 +188,7 @@ class RolodexEntry:
     source_range: Dict[str, int] = field(default_factory=dict)
     access_count: int = 0
     last_accessed: Optional[datetime] = None
-    created_at: datetime = field(default_factory=datetime.utcnow)
+    created_at: datetime = field(default_factory=_utcnow)
     tier: Tier = Tier.COLD
     embedding: Optional[List[float]] = None
     linked_ids: List[str] = field(default_factory=list)
@@ -106,7 +210,7 @@ class ConversationState:
     total_tokens: int = 0
     turn_count: int = 0
     librarian_active: bool = False
-    created_at: datetime = field(default_factory=datetime.utcnow)
+    created_at: datetime = field(default_factory=_utcnow)
     def add_message(self, role: MessageRole, content: str) -> Message:
         """Add a message and update state."""
         self.turn_count += 1
@@ -153,7 +257,7 @@ class TierEvent:
     old_tier: Tier
     new_tier: Tier
     score: float
-    timestamp: datetime = field(default_factory=datetime.utcnow)
+    timestamp: datetime = field(default_factory=_utcnow)
 
 
 # ─── Preloading (Phase 3) ───────────────────────────────────────────────────
@@ -170,7 +274,7 @@ class PreloadPrediction:
 class SessionInfo:
     """Metadata about a past or current session, for listing/display."""
     session_id: str
-    started_at: datetime = field(default_factory=datetime.utcnow)
+    started_at: datetime = field(default_factory=_utcnow)
     last_active: Optional[datetime] = None
     ended_at: Optional[datetime] = None
     message_count: int = 0
@@ -215,7 +319,7 @@ class ReasoningChain:
     topics: List[str] = field(default_factory=list)
     related_entries: List[str] = field(default_factory=list)  # Rolodex entry IDs
     embedding: Optional[List[float]] = None  # Vector for semantic chain search
-    created_at: datetime = field(default_factory=datetime.utcnow)
+    created_at: datetime = field(default_factory=_utcnow)
 
     def prev_chain_index(self) -> int:
         """Index of the previous chain in the session."""
@@ -378,7 +482,7 @@ def compute_importance_score(
     Final: score = access_weight * recency_factor * (1 + age_boost)
     """
     if now is None:
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
 
     # Base: how often accessed (log scale)
     access_weight = math.log1p(entry.access_count)
@@ -418,8 +522,8 @@ class ManifestEntry:
 class ManifestState:
     """The full boot manifest: a pre-computed, ranked context plan."""
     manifest_id: int = 0
-    created_at: datetime = field(default_factory=datetime.utcnow)
-    updated_at: datetime = field(default_factory=datetime.utcnow)
+    created_at: datetime = field(default_factory=_utcnow)
+    updated_at: datetime = field(default_factory=_utcnow)
     source_session_id: Optional[str] = None
     manifest_type: str = "super"  # super | incremental | refined
     total_token_cost: int = 0

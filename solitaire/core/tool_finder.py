@@ -22,7 +22,7 @@ Flow:
 import json
 import sqlite3
 import uuid
-from datetime import datetime, timedelta
+from datetime import datetime, timezone, timedelta
 from typing import Any, Callable, Dict, List, Optional, Set
 
 from .retrieval_patterns import detect_gap_signals
@@ -166,7 +166,7 @@ def generate_proposals(
         List of newly created proposal dicts.
     """
     if now is None:
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
 
     ensure_tool_proposals_schema(conn)
 
@@ -245,7 +245,7 @@ def get_pending_proposals(
         tool_description, tool_source, source_url, permissions, proposed_at, metadata.
     """
     if now is None:
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
 
     ensure_tool_proposals_schema(conn)
 
@@ -298,7 +298,7 @@ def confirm_proposal(
         Dict with status and proposal details, including install_command if available.
     """
     if now is None:
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
 
     ensure_tool_proposals_schema(conn)
 
@@ -350,7 +350,7 @@ def dismiss_proposal(
         Dict with status.
     """
     if now is None:
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
 
     ensure_tool_proposals_schema(conn)
 
@@ -402,7 +402,7 @@ def mark_installed(
         Dict with status.
     """
     if now is None:
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
 
     ensure_tool_proposals_schema(conn)
 
@@ -446,7 +446,7 @@ def record_tool_usage(
         Dict with status and updated use_count.
     """
     if now is None:
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
 
     ensure_tool_proposals_schema(conn)
 
@@ -493,7 +493,7 @@ def get_unused_tools(
                         use_count, days_unused}]
     """
     if now is None:
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
 
     ensure_tool_proposals_schema(conn)
 
@@ -552,7 +552,7 @@ def get_tool_report(
         dismissed_count, generated_at.
     """
     if now is None:
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
 
     ensure_tool_proposals_schema(conn)
 

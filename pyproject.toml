@@ -63,6 +63,4 @@ collect_ignore_glob = [
     "tests/tests/*",
     "tests/__pycache__/*",
     "tests/test_anticipatory.py",
-    "tests/test_clearinghouse.py",
-    "tests/test_cli.py",
 ]

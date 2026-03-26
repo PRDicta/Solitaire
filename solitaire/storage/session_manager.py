@@ -11,7 +11,7 @@ Multiple processes can share one DB file (SQLite WAL handles it).
 import uuid
 import sqlite3
 from typing import List, Optional
-from datetime import datetime
+from datetime import datetime, timezone
 from ..core.types import (
     Message, MessageRole, SessionInfo, estimate_tokens
 )
@@ -48,7 +48,7 @@ class SessionManager:
         (preserves existing metadata on conflict, only updates
         last_active and status).
         """
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         self.conn.execute(
             """INSERT INTO conversations
                (id, created_at, last_active, status, message_count,
@@ -78,7 +78,7 @@ class SessionManager:
         """
         Mark a session as ended. Updates final counts and summary.
         """
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         # Compute final counts from DB
         msg_count = self._count_messages(conversation_id)
         entry_count = self._count_entries(conversation_id)
@@ -100,7 +100,7 @@ class SessionManager:
 
     def update_session_activity(self, conversation_id: str) -> None:
         """Bump last_active and message_count after each turn."""
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         msg_count = self._count_messages(conversation_id)
         self.conn.execute(
             """UPDATE conversations

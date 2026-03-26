@@ -10,7 +10,7 @@ Lower-confidence predictions → warm into hot cache for fast retrieval
 import json
 import uuid
 from typing import List, Optional
-from datetime import datetime
+from datetime import datetime, timezone
 from ..core.types import (
     Message, RolodexEntry, PreloadPrediction, PreloadResult
 )
@@ -168,7 +168,7 @@ class Preloader:
                     json.dumps(injected_ids),
                     json.dumps(cache_warmed_ids),
                     json.dumps([]),  # hit_entry_ids filled in later
-                    datetime.utcnow().isoformat(),
+                    datetime.now(timezone.utc).isoformat(),
                 )
             )
             self.rolodex.conn.commit()

@@ -8,7 +8,7 @@ import json
 import uuid
 from dataclasses import dataclass, field, asdict
 from typing import List, Optional, Dict, Any
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 
@@ -70,7 +70,7 @@ class SharedEntry:
     source_persona: str = ""
     tags: List[str] = field(default_factory=list)
     visibility: str = "all"
-    created_at: str = field(default_factory=lambda: datetime.utcnow().isoformat())
+    created_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
     expires_at: Optional[str] = None
     superseded_by: Optional[str] = None
     metadata: Dict[str, Any] = field(default_factory=dict)
@@ -89,7 +89,7 @@ class SharedEntry:
         if not self.expires_at:
             return False
         if now is None:
-            now = datetime.utcnow()
+            now = datetime.now(timezone.utc)
         try:
             expires = datetime.fromisoformat(self.expires_at)
             return now > expires
@@ -215,7 +215,7 @@ class SharedKnowledgeStore:
             source_persona=source_persona,
             tags=tags,
             visibility=visibility,
-            created_at=datetime.utcnow().isoformat(),
+            created_at=datetime.now(timezone.utc).isoformat(),
             expires_at=expires_at,
             metadata=metadata,
         )

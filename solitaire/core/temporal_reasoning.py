@@ -16,7 +16,7 @@ import json
 import sqlite3
 import uuid
 import re
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import List, Optional, Dict, Tuple
 from dataclasses import dataclass, field
 
@@ -384,7 +384,7 @@ class TemporalReasoner:
         self.ensure_schema()
 
         event_id = str(uuid.uuid4())[:8]
-        now = datetime.utcnow().isoformat()
+        now = datetime.now(timezone.utc).isoformat()
         event_time = event_time or now
         entity_name_lower = entity_name.lower().strip()
 
@@ -574,7 +574,7 @@ class TemporalReasoner:
         self.ensure_schema()
 
         if not event_time:
-            event_time = created_at or datetime.utcnow().isoformat()
+            event_time = created_at or datetime.now(timezone.utc).isoformat()
 
         # Load KG entities for cross-referencing (cached after first call)
         kg_entities = self.load_kg_entities()
@@ -654,7 +654,7 @@ class TemporalReasoner:
         """
         from datetime import timedelta
 
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         cutoff = (now - timedelta(hours=since_hours)).isoformat()
 
         result = []

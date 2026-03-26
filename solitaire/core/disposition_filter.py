@@ -12,7 +12,7 @@ import json
 import re
 import uuid
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Dict, List, Optional, Tuple, Any
 
 from .persona import (
@@ -304,7 +304,7 @@ class DispositionFilter:
                     confidence=confidence,
                     reinforcement_count=max_reinforcement + 1,  # This is a new reinforcement
                     session_id=self.session_id,
-                    created_at=datetime.utcnow(),
+                    created_at=datetime.now(timezone.utc),
                 )
                 detected.append(entry)
 

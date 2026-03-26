@@ -468,8 +468,8 @@ class RecallOrchestrator:
 
     def _apply_fresh_filter(self, scored: List[ScoredCandidate]) -> List[ScoredCandidate]:
         """Apply recency filter for fresh-mode queries."""
-        from datetime import datetime
-        now = datetime.utcnow()
+        from datetime import datetime, timezone
+        now = datetime.now(timezone.utc)
         fresh_cutoff = 48 * 3600  # 48 hours
 
         fresh_scored = [

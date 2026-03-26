@@ -17,7 +17,7 @@ The tracker keeps the YAML under 2KB through beat FIFO trimming.
 
 from dataclasses import dataclass, field, asdict
 from typing import Optional, List, Dict, Any
-from datetime import datetime
+from datetime import datetime, timezone
 import os
 import yaml
 
@@ -236,7 +236,7 @@ class NarrativeTracker:
 
         beat = Beat(
             description=description,
-            timestamp=datetime.utcnow().isoformat(),
+            timestamp=datetime.now(timezone.utc).isoformat(),
             significance=significance,
         )
         self.narrative.current_chapter.key_beats.append(beat)
@@ -266,7 +266,7 @@ class NarrativeTracker:
         thread = Thread(
             description=description,
             status="open",
-            opened_at=datetime.utcnow().isoformat(),
+            opened_at=datetime.now(timezone.utc).isoformat(),
             resolved_at="",
         )
         self.narrative.current_chapter.open_threads.append(thread)
@@ -289,7 +289,7 @@ class NarrativeTracker:
         for thread in self.narrative.current_chapter.open_threads:
             if keyword.lower() in thread.description.lower():
                 thread.status = "resolved"
-                thread.resolved_at = datetime.utcnow().isoformat()
+                thread.resolved_at = datetime.now(timezone.utc).isoformat()
                 self.save()
                 return True
 
@@ -360,7 +360,7 @@ class NarrativeTracker:
         # Open new chapter
         self.narrative.current_chapter = Chapter(
             title=title,
-            opened=datetime.utcnow().strftime("%Y-%m-%d"),
+            opened=datetime.now(timezone.utc).strftime("%Y-%m-%d"),
             theme=theme,
             key_beats=[],
             open_threads=[],

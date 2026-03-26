@@ -9,25 +9,25 @@ High pressure → aggressive (LLM trajectory prediction)
 """
 from dataclasses import dataclass, field
 from typing import List, Dict
-from datetime import datetime
+from datetime import datetime, timezone
 
 
 @dataclass
 class _GapEvent:
     turn: int
-    timestamp: datetime = field(default_factory=datetime.utcnow)
+    timestamp: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
 @dataclass
 class _QueryEvent:
     turn: int
     cache_hit: bool
-    timestamp: datetime = field(default_factory=datetime.utcnow)
+    timestamp: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
 @dataclass
 class _TokenEvent:
     turn: int
     count: int
-    timestamp: datetime = field(default_factory=datetime.utcnow)
+    timestamp: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
 
 class PressureMonitor:

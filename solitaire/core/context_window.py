@@ -23,7 +23,7 @@ What gets offloaded:
 """
 from dataclasses import dataclass, field
 from typing import List, Optional, Dict, Any, Tuple
-from datetime import datetime
+from datetime import datetime, timezone
 
 from .types import Message, MessageRole, ConversationState, estimate_tokens
 
@@ -112,7 +112,7 @@ class ContextWindowManager:
         """
         self._checkpoints.append(IngestionCheckpoint(
             turn_number=turn_number,
-            timestamp=datetime.utcnow(),
+            timestamp=datetime.now(timezone.utc),
             entry_count=entry_count,
             token_count=token_count,
         ))

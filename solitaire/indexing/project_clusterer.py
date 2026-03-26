@@ -19,7 +19,7 @@ Design principles:
 import json
 import uuid
 from collections import defaultdict
-from datetime import datetime, timedelta
+from datetime import datetime, timezone, timedelta
 from typing import Dict, List, Optional, Tuple, Any
 
 from ..core.types import estimate_tokens
@@ -63,7 +63,7 @@ class ProjectClusterer:
 
         Returns list of cluster dicts.
         """
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
 
         # 1. Build topic-per-session matrix
         session_topics = self._get_session_topic_matrix()
@@ -175,7 +175,7 @@ class ProjectClusterer:
         if not session_topic_ids:
             return
 
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         clusters = self._get_existing_clusters()
 
         if not clusters:

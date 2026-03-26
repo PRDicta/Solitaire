@@ -82,7 +82,7 @@ def build_briefing_block(
     Returns:
         BriefingResult with the assembled block and metadata.
     """
-    cutoff = (datetime.utcnow() - timedelta(hours=window_hours)).isoformat()
+    cutoff = (datetime.now(timezone.utc) - timedelta(hours=window_hours)).isoformat()
 
     # Step 1: Gather recent sessions within the window
     digests = _gather_session_digests(conn, current_session_id, cutoff)
@@ -479,7 +479,7 @@ def _close_unclosed_sessions(
                   AND status = 'active'
                   AND (summary IS NULL OR summary = '')
             """, (
-                digest.ended_at or datetime.utcnow().isoformat(),
+                digest.ended_at or datetime.now(timezone.utc).isoformat(),
                 digest.summary,
                 digest.session_id,
             ))
@@ -572,7 +572,7 @@ def _relative_time(timestamp: str) -> str:
         return "unknown"
     try:
         t = datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         # Handle timezone-aware vs naive
         if t.tzinfo:
             t = t.replace(tzinfo=None)
