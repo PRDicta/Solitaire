@@ -1901,6 +1901,161 @@ class IdentityGraph:
             created_at=row["created_at"] or "",
         )
 
+    def export_dashboard_data(self) -> Dict:
+        """Export a complete JSON snapshot for the reflexive mirror dashboard.
+
+        Returns a dict with all data needed to render the dashboard dynamically.
+        Called at boot and end-of-session; written to a JSON file that the HTML reads.
+        """
+        stats = self.stats()
+        commit_stats = self.commitment_stats()
+
+        # North Star
+        north_star = self.get_north_star()
+        ns_data = None
+        if north_star:
+            ns_content = north_star.content
+            if ns_content.startswith("North Star: "):
+                ns_content = ns_content[len("North Star: "):]
+            ns_data = {
+                "content": ns_content,
+                "source": north_star.metadata.get("source", "unknown"),
+            }
+
+        # Growth edges
+        growth_edges = []
+        for ge in self.get_nodes_by_type(NodeType.GROWTH_EDGE.value, limit=20):
+            commits = self.conn.execute(
+                """SELECT COUNT(*) FROM identity_nodes
+                   WHERE node_type = 'commitment'
+                   AND json_extract(metadata, '$.source_node') = ?""",
+                (ge.id,)
+            ).fetchone()[0]
+            sigs = self.conn.execute(
+                """SELECT COUNT(*) FROM identity_signals s
+                   JOIN identity_nodes n ON s.commitment_id = n.id
+                   WHERE json_extract(n.metadata, '$.source_node') = ?""",
+                (ge.id,)
+            ).fetchone()[0]
+            growth_edges.append({
+                "id": ge.id,
+                "title": ge.content[:80],
+                "content": ge.content,
+                "status": ge.status or "identified",
+                "commitment_count": commits,
+                "signal_count": sigs,
+                "is_core": ge.metadata.get("core", False),
+            })
+
+        # Patterns
+        patterns = []
+        for p in self.get_nodes_by_type(NodeType.PATTERN.value, limit=20):
+            patterns.append({
+                "id": p.id,
+                "content": p.content[:120],
+                "valence": p.valence,
+                "trajectory": p.trajectory,
+                "status": p.status,
+                "observation_count": p.observation_count,
+            })
+
+        # Tensions
+        tensions = []
+        for t in self.get_nodes_by_type(NodeType.TENSION.value, limit=10):
+            tensions.append({
+                "id": t.id,
+                "content": t.content[:120],
+                "status": t.status,
+            })
+
+        # Active commitments with signal details
+        active_commitments = []
+        for c in self.get_active_commitments():
+            signals = self.get_signals_for_commitment(c.id)
+            held = sum(1 for s in signals if s.signal_type == "held")
+            missed = sum(1 for s in signals if s.signal_type == "missed")
+            sources = {}
+            for s in signals:
+                sources[s.source] = sources.get(s.source, 0) + 1
+            active_commitments.append({
+                "id": c.id,
+                "content": c.content,
+                "source_node": c.metadata.get("source_node"),
+                "source_type": c.metadata.get("source_type"),
+                "signal_count": len(signals),
+                "held": held,
+                "missed": missed,
+                "sources": sources,
+                "silent": len(signals) == 0,
+            })
+
+        # All-time signal stats
+        all_signals = self.conn.execute(
+            "SELECT * FROM identity_signals ORDER BY created_at DESC"
+        ).fetchall()
+        signal_list = [self._row_to_signal(r) for r in all_signals]
+
+        total_held = sum(1 for s in signal_list if s.signal_type == "held")
+        total_missed = sum(1 for s in signal_list if s.signal_type == "missed")
+        total_signals = len(signal_list)
+
+        source_breakdown = {}
+        for s in signal_list:
+            source_breakdown[s.source] = source_breakdown.get(s.source, 0) + 1
+
+        # Coverage
+        silent_count = sum(1 for c in active_commitments if c["silent"])
+        covered_count = len(active_commitments) - silent_count
+        coverage_pct = (
+            round(covered_count / len(active_commitments) * 100)
+            if active_commitments else 0
+        )
+
+        # Held:missed ratio
+        held_ratio = (
+            round(total_held / (total_held + total_missed), 3)
+            if (total_held + total_missed) > 0 else 0.0
+        )
+
+        # Recent signals (last 20 for timeline)
+        recent_signals = []
+        for s in signal_list[:20]:
+            recent_signals.append({
+                "id": s.id,
+                "type": s.signal_type,
+                "source": s.source,
+                "content": s.content[:150] if s.content else "",
+                "commitment_id": s.commitment_id,
+                "session_id": s.session_id,
+                "created_at": s.created_at,
+            })
+
+        return {
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+            "stats": {
+                "total_nodes": stats["total_nodes"],
+                "total_edges": stats["total_edges"],
+                "total_signals": total_signals,
+                "total_commitments": stats["nodes_by_type"].get("commitment", 0),
+                "active_commitments": len(active_commitments),
+                "coverage_pct": coverage_pct,
+            },
+            "north_star": ns_data,
+            "growth_edges": growth_edges,
+            "patterns": patterns,
+            "tensions": tensions,
+            "commitments": active_commitments,
+            "signals": {
+                "total": total_signals,
+                "held": total_held,
+                "missed": total_missed,
+                "held_ratio": held_ratio,
+                "by_source": source_breakdown,
+                "recent": recent_signals,
+            },
+            "calibration": commit_stats.get("calibration", {}),
+        }
+
     def _row_to_signal(self, row: sqlite3.Row) -> IdentitySignal:
         return IdentitySignal(
             id=row["id"],

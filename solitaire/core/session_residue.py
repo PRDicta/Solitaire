@@ -1,15 +1,19 @@
 """
-Session Residue: Compressed poetic encoding of a session's texture.
+Session Residue: Compressed encoding of a session's texture.
 
 Written by the active Claude instance at session end (the only moment
 with full context), stored per-persona, loaded at next boot as priming.
 
-One paragraph, 40-80 tokens. Never longer. Not information — orientation.
+Dynamic budget: as long as it needs to be for the next session to pick up
+context without archaeology. Thin sessions might need 40 tokens. Dense
+architecture sessions might need 250+. The residue should encode the arc,
+key moves, and enough specifics that the next boot can orient immediately.
 """
 
 import json
 import os
 import sqlite3
+import uuid
 from datetime import datetime, timezone
 from typing import Optional
 
@@ -32,7 +36,7 @@ def write_residue(
     Args:
         conn: SQLite connection to the rolodex database
         session_id: Current session ID
-        residue_text: The poetic residue paragraph (40-80 tokens ideal)
+        residue_text: The session residue (dynamic length, as needed)
         persona_key: Active persona key (for file-based fallback)
         persona_dir: Mounted persona directory (persistent). If provided,
                      latest_residue.json is written here instead of the
@@ -49,28 +53,33 @@ def write_residue(
     tokens = estimate_tokens(residue_text)
     warnings = []
 
-    if tokens > 120:
-        warnings.append(f"Residue is {tokens} tokens — target is 40-80. Consider trimming.")
     if tokens < 15:
         warnings.append(f"Residue is only {tokens} tokens — may be too thin to prime effectively.")
 
-    # Store in DB (rolodex_entries with a special source_type)
+    # Store in DB (rolodex_entries + rolodex_fts in same transaction)
     now = datetime.now(timezone.utc).isoformat()
+    entry_id = uuid.uuid4().hex.upper()
+    tags_json = json.dumps(["session_residue", persona_key, now[:10]])
     try:
         conn.execute("""
             INSERT INTO rolodex_entries (
                 id, content, content_type, source_type, category,
                 conversation_id, created_at, tags
             ) VALUES (
-                hex(randomblob(16)), ?, 'session_residue', 'session_residue',
+                ?, ?, 'session_residue', 'session_residue',
                 'session_residue', ?, ?, ?
             )
         """, (
+            entry_id,
             residue_text,
             session_id,
             now,
-            json.dumps(["session_residue", persona_key, now[:10]]),
+            tags_json,
         ))
+        conn.execute(
+            "INSERT INTO rolodex_fts (entry_id, content, tags, category) VALUES (?, ?, ?, ?)",
+            (entry_id, residue_text, tags_json, "session_residue")
+        )
         conn.commit()
     except Exception as e:
         return {"status": "error", "detail": f"DB write failed: {e}"}

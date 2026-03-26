@@ -389,10 +389,27 @@ class Reranker:
         """
         Score based on access frequency (the well-worn book principle).
         More accesses = higher score, capped at frequency_cap.
+
+        Entries younger than 24 hours get a frequency floor of 0.5 (neutral)
+        instead of 0.0, since they haven't had time to accumulate accesses.
         """
         access_count = getattr(entry, "access_count", 0) or 0
 
         if access_count <= 0:
+            # New entries shouldn't be penalized for having zero accesses.
+            # Check age: if < 24 hours old, return neutral instead of zero.
+            try:
+                if hasattr(entry, "created_at") and entry.created_at is not None:
+                    import time as _time
+                    if hasattr(entry.created_at, "timestamp"):
+                        entry_time = entry.created_at.timestamp()
+                    else:
+                        entry_time = float(entry.created_at)
+                    age_hours = (_time.time() - entry_time) / 3600
+                    if age_hours < 24:
+                        return 0.5  # Neutral -- too new to judge
+            except (TypeError, ValueError):
+                pass
             return 0.0
 
         return min(access_count / self.config.frequency_cap, 1.0)

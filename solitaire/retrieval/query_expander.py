@@ -17,10 +17,41 @@ Three capabilities:
 
 No LLM calls — this is entirely heuristic and runs in microseconds.
 """
+import os
 import re
 from typing import List, Dict, Optional, Set
 from dataclasses import dataclass, field
 from .entity_extractor import EntityExtractor, ExtractedEntities
+
+
+# ─── Project Aliases (loaded once at import) ────────────────────────────────
+# Maps canonical names to user-facing aliases and vice versa.
+# Loaded from project_aliases.yaml alongside this module.
+
+_PROJECT_ALIASES: Dict[str, List[str]] = {}
+_REVERSE_ALIASES: Dict[str, str] = {}  # alias_lower -> canonical_name
+
+def _load_project_aliases():
+    """Load project_aliases.yaml and build forward + reverse lookup."""
+    global _PROJECT_ALIASES, _REVERSE_ALIASES
+    yaml_path = os.path.join(os.path.dirname(__file__), "project_aliases.yaml")
+    if not os.path.exists(yaml_path):
+        return
+    try:
+        import yaml
+        with open(yaml_path, 'r', encoding='utf-8') as f:
+            data = yaml.safe_load(f) or {}
+        aliases = data.get("aliases", {})
+        _PROJECT_ALIASES = aliases
+        for canonical, alias_list in aliases.items():
+            for alias in alias_list:
+                _REVERSE_ALIASES[alias.lower()] = canonical
+            # Also map canonical to itself for completeness
+            _REVERSE_ALIASES[canonical.lower()] = canonical
+    except Exception:
+        pass  # YAML parse failure is non-fatal
+
+_load_project_aliases()
 
 
 # ─── Intent Types ────────────────────────────────────────────────────────────
@@ -145,6 +176,10 @@ CONCEPT_MAP: Dict[str, List[str]] = {
     "content": ["pipeline", "production prompt", "voice profile", "client", "routing", "workflow"],
     "pipeline": ["content", "routing", "production prompt", "voice profile", "prompt", "workflow"],
     "clients": ["neon health", "dream 100", "routing", "tier", "voice profile", "content"],
+    # Project-level vocabulary bridges
+    "symbiosis": ["Spec v1.2", "persona", "greeting", "resident knowledge", "indexed", "anticipatory", "clearinghouse", "Phase 1", "Phase 2", "Phase 3", "Phase 4", "Phase 5", "Phase 6"],
+    "solitaire": ["unified product", "private repo", "consolidated", "librarian", "token alchemy", "compression"],
+    "commitment": ["eval harness", "behavioral signature", "shadow mode", "F1", "scorer", "detection"],
 }
 
 # Domain / technical synonyms — bidirectional term bridging.
@@ -274,6 +309,13 @@ TEMPORAL_PHRASES = [
     r"^(?:do you )?recall (?:the |our )?(?:last|previous|most recent) session\s*\??$",
     r"^(?:and )?(?:do you )?recall (?:the |our )?(?:last|previous|most recent) session",
     r"^(?:show|tell) me (?:the |our )?(?:last|previous|most recent) (?:few )?sessions?\s*\??$",
+    # Broader temporal patterns -- queries about recent activity without naming "session"
+    r"^(?:what was |what's )?(?:the )?(?:most recent|latest) (?:work|thing|stuff)\b",
+    r"^(?:where did we (?:leave off|stop|end))\s*\??$",
+    r"^(?:where were we|picking up where we left off)\s*\??$",
+    r"^(?:what have we been (?:working on|doing|building))\s*\??$",
+    r"^(?:what (?:was|were) (?:the )?last (?:thing|work|task))\b",
+    r"^(?:catch me up|bring me up to speed|what did I miss)\s*\??$",
 ]
 
 # Category biases per intent type
@@ -406,6 +448,13 @@ class QueryExpander:
             if concept_only not in variants:
                 variants.append(concept_only)
 
+        # Step 3.9: Project alias expansion -- bridge user-facing names to
+        # canonical internal names. "symbiosis adapter" -> also search "Spec v1.2".
+        alias_variants = self._expand_project_aliases(lower)
+        for av in alias_variants:
+            if av not in variants:
+                variants.append(av)
+
         # Step 4: Generate entity-focused variant
         # If entities were found, create a variant that's just the entities
         # This is what makes "Philip's analogy about books" findable
@@ -467,6 +516,42 @@ class QueryExpander:
                 remaining = remaining.replace(phrase, " ")
 
         return found
+
+    def _expand_project_aliases(self, query: str) -> List[str]:
+        """Bridge user-facing project names to canonical internal names.
+
+        When the query contains a known alias (e.g., "symbiosis adapter"),
+        generates variants using the canonical name (e.g., "Spec v1.2")
+        and vice versa. Uses longest-match-first to handle multi-word aliases.
+        """
+        if not _REVERSE_ALIASES:
+            return []
+
+        variants: List[str] = []
+        query_lower = query.lower()
+
+        # Sort aliases by length (longest first) for greedy matching
+        sorted_aliases = sorted(_REVERSE_ALIASES.keys(), key=len, reverse=True)
+
+        for alias in sorted_aliases:
+            if alias in query_lower:
+                canonical = _REVERSE_ALIASES[alias]
+                # If query uses an alias, add variant with canonical name
+                if alias != canonical.lower():
+                    replaced = query_lower.replace(alias, canonical.lower())
+                    if replaced not in variants:
+                        variants.append(replaced)
+                # Also add variant with just the canonical name
+                if canonical.lower() not in variants and canonical.lower() != query_lower:
+                    variants.append(canonical.lower())
+                # Add variants with other aliases of the same canonical name
+                if canonical in _PROJECT_ALIASES:
+                    for other_alias in _PROJECT_ALIASES[canonical][:2]:
+                        if other_alias.lower() != alias and other_alias.lower() not in variants:
+                            variants.append(other_alias.lower())
+                break  # One match per query to avoid explosion
+
+        return variants[:3]  # Cap to keep variant count manageable
 
     def _expand_concepts(self, query: str) -> List[str]:
         """Bridge high-level category terms to corpus-level vocabulary.

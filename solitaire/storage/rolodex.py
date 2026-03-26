@@ -421,8 +421,11 @@ class Rolodex:
         Full-text search via FTS5.
         Returns list of (entry, rank_score) tuples, best first.
 
-        When the default AND query (all terms required) returns nothing,
-        falls back to OR (any term matches) for better recall.
+        Progressive fallback strategy:
+        1. AND(all terms) - most precise
+        2. AND(N-1 terms) - drop shortest term, retry
+        3. ... continue dropping until results found or 2 terms remain
+        4. OR(all terms) - broadest net, last resort
 
         Phase 12: Optional source_type filter ('conversation', 'document', 'user_knowledge').
         Tiered recall: Optional category_filter restricts to specific entry categories.
@@ -431,14 +434,29 @@ class Rolodex:
         results = self._fts_match(query, limit, conversation_id, source_type=source_type,
                                   category_filter=category_filter)
 
-        # If no results and query has multiple words, try OR fallback
+        # Progressive term dropping: remove least specific term and retry AND
         if not results and ' ' in query.strip():
             fts_operators = {'AND', 'OR', 'NOT', 'NEAR'}
             terms = [
                 t for t in query.strip().split()
                 if t.upper() not in fts_operators and len(t) > 1
             ]
-            if len(terms) > 1:
+            if len(terms) > 2:
+                # Sort by length ascending (shortest = least specific, dropped first)
+                ranked = sorted(range(len(terms)), key=lambda i: len(terms[i]))
+                for drop_idx in ranked:
+                    reduced = [t for i, t in enumerate(terms) if i != drop_idx]
+                    if len(reduced) < 2:
+                        break
+                    reduced_query = ' '.join(reduced)
+                    results = self._fts_match(reduced_query, limit, conversation_id,
+                                              source_type=source_type,
+                                              category_filter=category_filter)
+                    if results:
+                        break
+
+            # Final fallback: OR of all terms
+            if not results and len(terms) > 1:
                 or_query = ' OR '.join(terms)
                 results = self._fts_match(or_query, limit, conversation_id, source_type=source_type,
                                           category_filter=category_filter)

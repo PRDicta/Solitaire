@@ -198,7 +198,7 @@ def _extract_entity_name_from_context(content: str, kg_entities: Optional[set] =
     return None
 
 
-def _detect_status_changes(content: str) -> List[Tuple[str, str, Optional[str], Optional[str]]]:
+def _detect_status_changes(content: str, kg_entities: Optional[set] = None) -> List[Tuple[str, str, Optional[str], Optional[str]]]:
     """
     Detect status change signals in content.
     Returns list of (entity_name, old_status, new_status, description).
@@ -221,7 +221,7 @@ def _detect_status_changes(content: str) -> List[Tuple[str, str, Optional[str], 
     return changes
 
 
-def _detect_version_bumps(content: str) -> List[Tuple[str, str, str, str]]:
+def _detect_version_bumps(content: str, kg_entities: Optional[set] = None) -> List[Tuple[str, str, str, str]]:
     """
     Detect version change signals.
     Returns list of (entity_name, old_version, new_version, description).
@@ -232,7 +232,7 @@ def _detect_version_bumps(content: str) -> List[Tuple[str, str, str, str]]:
     for match in _VERSION_UPGRADE_PATTERN.finditer(content):
         version = match.group(1)
         context = content[max(0, match.start() - 50):match.end()]
-        entity = _extract_entity_name_from_context(context)
+        entity = _extract_entity_name_from_context(context, kg_entities)
         if entity:
             changes.append((entity, None, f"v{version}", f"Updated to version {version}"))
 
@@ -240,14 +240,14 @@ def _detect_version_bumps(content: str) -> List[Tuple[str, str, str, str]]:
     for match in _VERSION_PATTERN.finditer(content):
         version = match.group(1)
         context = content[max(0, match.start() - 50):match.end()]
-        entity = _extract_entity_name_from_context(context)
+        entity = _extract_entity_name_from_context(context, kg_entities)
         if entity:
             changes.append((entity, None, f"v{version}", f"Version {version}"))
 
     return changes
 
 
-def _detect_decisions(content: str) -> List[Tuple[str, str, str]]:
+def _detect_decisions(content: str, kg_entities: Optional[set] = None) -> List[Tuple[str, str, str]]:
     """
     Detect decision signals.
     Returns list of (entity_name, decision_description, rationale).
@@ -334,6 +334,7 @@ class TemporalReasoner:
         """Load known entity names from the knowledge graph for cross-referencing.
 
         Caches the result for the lifetime of this reasoner instance.
+        Filters out KG entities that fail the same quality checks as extracted entities.
         Returns a set of entity name strings.
         """
         if self._kg_entities is not None:
@@ -345,6 +346,8 @@ class TemporalReasoner:
             self._kg_entities = {
                 (r["entity"] if isinstance(r, sqlite3.Row) else r[0])
                 for r in rows
+                if (r["entity"] if isinstance(r, sqlite3.Row) else r[0]) and
+                   _is_valid_entity(r["entity"] if isinstance(r, sqlite3.Row) else r[0])
             }
         except Exception:
             self._kg_entities = set()
@@ -582,7 +585,7 @@ class TemporalReasoner:
         events_created = []
 
         # Detect status changes
-        for entity_name, old_status, new_status, description in _detect_status_changes(content):
+        for entity_name, old_status, new_status, description in _detect_status_changes(content, kg_entities):
             event = self.record_event(
                 entity_name=entity_name,
                 event_type="status_change",
@@ -595,7 +598,7 @@ class TemporalReasoner:
             events_created.append(event)
 
         # Detect version bumps
-        for entity_name, old_ver, new_ver, description in _detect_version_bumps(content):
+        for entity_name, old_ver, new_ver, description in _detect_version_bumps(content, kg_entities):
             event = self.record_event(
                 entity_name=entity_name,
                 event_type="updated",
@@ -608,7 +611,7 @@ class TemporalReasoner:
             events_created.append(event)
 
         # Detect decisions
-        for entity_name, decision_desc, description in _detect_decisions(content):
+        for entity_name, decision_desc, description in _detect_decisions(content, kg_entities):
             event = self.record_event(
                 entity_name=entity_name,
                 event_type="decision",
