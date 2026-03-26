@@ -1064,3 +1064,79 @@ def build_measurement_summary(conn, lookback_sessions: int = 5, identity_graph=N
         return summary.build_summary(lookback_sessions)
     except Exception:
         return {"error": "Failed to build measurement summary"}
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# SHADOW MODE: BEHAVIORAL SIGNATURE SCORER (EXPERIMENTAL)
+# ═══════════════════════════════════════════════════════════════════════════
+# Runs the behavioral signature scorer alongside the existing keyword scorer.
+# Logs results to a shadow file for comparison. Does NOT write signals to DB.
+
+def run_shadow_behavioral_scoring(
+    conn,
+    session_id: str,
+    content: str,
+    role: str = "assistant",
+    identity_graph=None,
+) -> Optional[Dict]:
+    """Run behavioral signature scoring in shadow mode (log only, no DB writes).
+
+    Called from the ingestion pipeline alongside run_retroactive_scoring.
+    Writes comparison data to evals/commitment_detection/shadow_log.jsonl.
+    """
+    if role != "assistant":
+        return None
+
+    try:
+        import sys
+        from pathlib import Path
+
+        # Import the alternative scorer from evals
+        evals_dir = Path(__file__).resolve().parent.parent.parent / "evals"
+        if str(evals_dir.parent) not in sys.path:
+            sys.path.insert(0, str(evals_dir.parent))
+
+        from evals.commitment_detection.alternative_scorers import (
+            BehavioralSignatureScorer,
+            StructuralAnalyzer,
+            SIGNATURES,
+        )
+
+        scorer = BehavioralSignatureScorer()
+        structural = StructuralAnalyzer()
+
+        results = {}
+        for source_id in SIGNATURES:
+            direction = scorer.score(content, source_id)
+
+            # Supplement with structural analysis for reflective moments
+            if source_id == "idn_seed_ge_01" and direction is None:
+                if structural.has_reflective_to_task_pivot(content):
+                    direction = "missed"
+
+            if direction:
+                results[source_id] = direction
+
+        if not results:
+            return None
+
+        # Log to shadow file (never touches the identity DB)
+        shadow_log = evals_dir / "commitment_detection" / "shadow_log.jsonl"
+        log_entry = json.dumps({
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "session_id": session_id,
+            "content_preview": content[:150],
+            "content_length": len(content),
+            "detections": results,
+        })
+
+        with open(shadow_log, "a", encoding="utf-8") as f:
+            f.write(log_entry + "\n")
+
+        return {
+            "shadow_behavioral_signals": len(results),
+            "detections": results,
+        }
+
+    except Exception:
+        return None  # Shadow mode: never block anything

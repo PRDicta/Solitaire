@@ -1,0 +1,46 @@
+# Project Vocabulary Aliases
+# Maps canonical internal names to user-facing names and alternative references.
+# Used at:
+#   - Ingestion time: tag entries with aliases when canonical name detected in content
+#   - Query time: expand queries containing aliases to also search canonical names
+#
+# Format: canonical_name -> list of aliases (user-facing names for the same thing)
+
+aliases:
+  "Spec v1.2":
+    - "memory symbiosis adapter"
+    - "symbiosis adapter"
+    - "persona symbiosis"
+    - "symbiosis spec"
+  "identity graph":
+    - "identity system"
+    - "self-knowledge graph"
+    - "identity graph spec"
+  "Solitaire":
+    - "unified product"
+    - "consolidated repo"
+    - "solitaire product"
+  "behavioral genome":
+    - "genome"
+    - "attention patterns"
+    - "conversational rhythm"
+  "session residue":
+    - "residue"
+    - "session texture"
+  "commitment detection":
+    - "commitment eval"
+    - "commitment scorer"
+    - "behavioral signature scorer"
+    - "commitment eval harness"
+  "clearinghouse":
+    - "cross-persona sharing"
+    - "skill sharing"
+  "anticipatory acquisition":
+    - "anticipatory knowledge"
+    - "tier 3 acquisition"
+  "disposition filter":
+    - "disposition drift"
+    - "trait drift"
+  "token alchemy":
+    - "compression engine"
+    - "yaml compression"
