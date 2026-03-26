@@ -1882,6 +1882,7 @@ class SolitaireEngine:
             "3. Residue write after each ingest-turn\n\n"
             "## Writing Standards\n"
             "No em dashes. No AI-tell word clustering. Vary sentence length.\n"
+            'No "good catch." No "honestly." No compulsive summaries. No closers that add nothing.\n'
             "See writing standards reference.\n"
         )
 
