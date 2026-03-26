@@ -3,6 +3,7 @@
 </p>
 
 <p align="center">
+  <a href="https://github.com/PRDicta/Solitaire-for-Agents/actions/workflows/ci.yml"><img src="https://github.com/PRDicta/Solitaire-for-Agents/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-AGPL--3.0-blue.svg" alt="License"></a>
   <img src="https://img.shields.io/badge/python-3.10%2B-blue.svg" alt="Python 3.10+">
   <img src="https://img.shields.io/badge/sessions-400%2B-orange.svg" alt="400+ sessions">
