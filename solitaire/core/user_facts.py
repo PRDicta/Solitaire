@@ -220,7 +220,7 @@ def extract_facts(content: str, role: str,
                 provenance=provenance,
                 fact_type=fact_type,
                 confidence=1.0 if provenance == "user-stated" else 0.7,
-                created_at=datetime.utcnow().isoformat(),
+                created_at=datetime.now(timezone.utc).isoformat(),
             ))
 
     return facts
@@ -365,7 +365,7 @@ class UserFactsStore:
             UPDATE user_facts
             SET superseded_by = ?, superseded_at = ?
             WHERE id = ?
-        """, (new_fact_id, datetime.utcnow().isoformat(), old_fact_id))
+        """, (new_fact_id, datetime.now(timezone.utc).isoformat(), old_fact_id))
         self.conn.commit()
 
     def count_active(self) -> int:

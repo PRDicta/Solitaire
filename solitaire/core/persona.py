@@ -18,7 +18,7 @@ import math
 import yaml
 from copy import deepcopy
 from dataclasses import dataclass, field, asdict
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, List, Optional, Any
 
@@ -601,7 +601,7 @@ class DriftEntry:
     confidence: float                     # Signal detection confidence
     reinforcement_count: int = 0          # How many prior same-signal entries exist
     session_id: str = ""
-    created_at: datetime = field(default_factory=datetime.utcnow)
+    created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
     def to_content_dict(self) -> Dict[str, Any]:
         """Serialize for storage in rolodex_entries.content (JSON)."""
@@ -790,7 +790,7 @@ class PersonaState:
         Returns:
             List of RatchetCandidates that are newly ready for ratcheting.
         """
-        now = datetime.utcnow().isoformat()
+        now = datetime.now(timezone.utc).isoformat()
         self.effective_traits = {k: round(v, 4) for k, v in effective_traits.items()}
         self.total_sessions += 1
         self.last_session_id = session_id
@@ -879,7 +879,7 @@ class PersonaState:
             "direction": candidate.direction,
             "sessions_observed": candidate.consecutive_sessions,
             "average_delta": candidate.average_delta,
-            "applied_at": datetime.utcnow().isoformat(),
+            "applied_at": datetime.now(timezone.utc).isoformat(),
         }
         self.ratchet_log.append(log_entry)
 
@@ -924,7 +924,7 @@ class PersonaState:
         Args:
             report: A ReflectionReport from session_reflection.py.
         """
-        now = datetime.utcnow().isoformat()
+        now = datetime.now(timezone.utc).isoformat()
         self.last_reflection_at = now
         self.reflection_count += 1
 
@@ -1107,7 +1107,7 @@ class PersonaProfile:
     resident_budget_tokens: int = 4000
     custom_signals: List[Dict[str, Any]] = field(default_factory=list)
     meta: Dict[str, Any] = field(default_factory=lambda: {
-        "created_at": datetime.utcnow().strftime("%Y-%m-%d"),
+        "created_at": datetime.now(timezone.utc).strftime("%Y-%m-%d"),
         "created_by": "",
         "template_source": None,
         "model_affinity": None,

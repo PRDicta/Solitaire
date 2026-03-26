@@ -5,10 +5,10 @@ description: >
   knowledge graph, session continuity, persona management, and adaptive retrieval
   that survives across sessions. Boot at session start, ingest every turn. Your
   agent remembers everything.
-version: 0.1.0
+version: 1.0.0
 author: Dicta Technologies
 license: AGPL-3.0-or-later
-homepage: https://github.com/PRDicta/Solitaire
+homepage: https://github.com/PRDicta/Solitaire-for-Agents
 requires:
   runtime: python>=3.10
   packages:

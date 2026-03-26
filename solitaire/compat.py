@@ -110,7 +110,8 @@ def main():
                 os.environ["SOLITAIRE_WORKSPACE"] = str(candidate)
                 break
 
-    dispatch()
+    from solitaire.cli import main as cli_main
+    cli_main()
 
 
 if __name__ == "__main__":

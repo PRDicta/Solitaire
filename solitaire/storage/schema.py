@@ -7,7 +7,7 @@ import sqlite3
 import json
 import struct
 from typing import List, Optional, Dict, Any
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 
@@ -257,25 +257,6 @@ CREATE INDEX IF NOT EXISTS idx_process_trace_type
 CREATE INDEX IF NOT EXISTS idx_process_trace_created
     ON process_trace(created_at DESC);
 
--- Phase 19: Retrieval outcomes — tracks which recalled entries were actually used
-CREATE TABLE IF NOT EXISTS retrieval_outcomes (
-    id TEXT PRIMARY KEY,
-    entry_id TEXT NOT NULL,
-    session_id TEXT NOT NULL,
-    query_text TEXT NOT NULL,
-    recalled_at DATETIME NOT NULL,
-    used INTEGER DEFAULT 0,
-    confidence REAL DEFAULT 0.0,
-    context TEXT DEFAULT ''
-);
-
-CREATE INDEX IF NOT EXISTS idx_retrieval_outcomes_entry
-    ON retrieval_outcomes(entry_id);
-CREATE INDEX IF NOT EXISTS idx_retrieval_outcomes_session
-    ON retrieval_outcomes(session_id);
-CREATE INDEX IF NOT EXISTS idx_retrieval_outcomes_entry_used
-    ON retrieval_outcomes(entry_id, used);
-
 -- Phase 10: Manifest entries — ranked content selections for boot context
 CREATE TABLE IF NOT EXISTS manifest_entries (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -364,10 +345,10 @@ def init_database(db_path: str) -> sqlite3.Connection:
         UserFactsStore(conn)  # Creates table if missing
     except Exception:
         pass  # Non-fatal — table will be created on first use
-    # Phase 19c: Tool proposals table (proactive tool finding)
+    # Hindsight: temporal reasoning timeline table
     try:
-        from ..core.tool_finder import ensure_tool_proposals_schema
-        ensure_tool_proposals_schema(conn)
+        from ..core.temporal_reasoning import ensure_temporal_schema
+        ensure_temporal_schema(conn)
     except Exception:
         pass  # Non-fatal — table will be created on first use
     return conn

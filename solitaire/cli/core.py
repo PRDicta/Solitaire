@@ -158,11 +158,3 @@ def remember(ctx, fact):
 def mark_response(ctx, response_text, from_stdin):
     """Store assistant response for deferred ingestion."""
     _do_mark_response(ctx, response_text, from_stdin)
-
-
-@core.command("end")
-@click.argument("summary", default="")
-@click.pass_context
-def end(ctx, summary):
-    """End the current session."""
-    _do_end(ctx, summary)

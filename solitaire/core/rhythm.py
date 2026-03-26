@@ -7,7 +7,7 @@ Provides response guidance based on conversational state.
 
 import re
 from dataclasses import dataclass, field, asdict
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Literal
 
 
@@ -19,8 +19,8 @@ class RhythmState:
     session_depth: Literal["fresh", "working", "deep", "winding_down"] = "fresh"
     topic_weight: Literal["light", "working", "heavy", "sensitive"] = "working"
     message_count: int = 0
-    session_start_ts: str = field(default_factory=lambda: datetime.utcnow().isoformat())
-    last_message_ts: str = field(default_factory=lambda: datetime.utcnow().isoformat())
+    session_start_ts: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    last_message_ts: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
 
 
 def detect_energy(
@@ -51,7 +51,7 @@ def detect_energy(
     state.topic_weight = _detect_topic_weight(message)
 
     # Update timestamps
-    state.last_message_ts = datetime.utcnow().isoformat()
+    state.last_message_ts = datetime.now(timezone.utc).isoformat()
 
     return state
 
@@ -369,7 +369,7 @@ def from_dict(d: dict) -> RhythmState:
         topic_weight=d.get("topic_weight", "working"),
         message_count=d.get("message_count", 0),
         session_start_ts=d.get(
-            "session_start_ts", datetime.utcnow().isoformat()
+            "session_start_ts", datetime.now(timezone.utc).isoformat()
         ),
-        last_message_ts=d.get("last_message_ts", datetime.utcnow().isoformat()),
+        last_message_ts=d.get("last_message_ts", datetime.now(timezone.utc).isoformat()),
     )

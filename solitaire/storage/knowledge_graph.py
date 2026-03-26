@@ -19,7 +19,7 @@ Design principles:
 import json
 import sqlite3
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import List, Optional, Dict, Tuple, Set
 from dataclasses import dataclass, field
 
@@ -319,7 +319,7 @@ class KnowledgeGraph:
         if name_lower in self._entity_cache:
             entity_id = self._entity_cache[name_lower]
             # Update mention count and last_seen
-            now = datetime.utcnow().isoformat()
+            now = datetime.now(timezone.utc).isoformat()
             self.conn.execute(
                 """UPDATE entity_nodes
                    SET mention_count = mention_count + 1,
@@ -340,7 +340,7 @@ class KnowledgeGraph:
                            SET mention_count = mention_count + 1,
                                last_seen = ?
                            WHERE id = ?""",
-                        (datetime.utcnow().isoformat(), entity_id)
+                        (datetime.now(timezone.utc).isoformat(), entity_id)
                     )
                     # Add new name as alias
                     self._entity_cache[name_lower] = entity_id
@@ -348,7 +348,7 @@ class KnowledgeGraph:
 
         # Create new entity (UPSERT to handle concurrent writers safely)
         entity_id = str(uuid.uuid4())[:8]
-        now = datetime.utcnow().isoformat()
+        now = datetime.now(timezone.utc).isoformat()
         self.conn.execute(
             """INSERT INTO entity_nodes
                (id, name, name_lower, entity_type, aliases, first_seen, last_seen, mention_count)
@@ -419,7 +419,7 @@ class KnowledgeGraph:
         if not source_id or not target_id:
             return None
 
-        now = datetime.utcnow().isoformat()
+        now = datetime.now(timezone.utc).isoformat()
 
         # Upsert edge: the partial unique index idx_edge_active_unique
         # prevents duplicate active edges. ON CONFLICT strengthens the
@@ -452,7 +452,7 @@ class KnowledgeGraph:
 
     def invalidate_edge(self, edge_id: str):
         """Temporally invalidate an edge (mark as no longer current)."""
-        now = datetime.utcnow().isoformat()
+        now = datetime.now(timezone.utc).isoformat()
         self.conn.execute(
             "UPDATE entity_edges SET invalidated_at = ? WHERE id = ?",
             (now, edge_id)

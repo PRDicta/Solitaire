@@ -47,7 +47,7 @@ class SharedStore:
 
     def profile_set(self, key: str, value: str, session_id: Optional[str] = None) -> None:
         """Set or update a user profile preference (upsert)."""
-        now = datetime.utcnow().isoformat()
+        now = datetime.now(timezone.utc).isoformat()
         self.conn.execute(
             """INSERT INTO user_profile (key, value, source_session, updated_at)
                VALUES (?, ?, ?, ?)
@@ -101,10 +101,8 @@ class Rolodex:
         self._jsonl_session_id = ""
 
     def attach_jsonl_store(self, store, session_id: str = ""):
-        """Attach a PersonaJsonlStore for audit-trail persistence.
-        All mutations will append to JSONL in addition to SQLite.
-        SQLite (via SQL dumps) is the primary persistence path;
-        JSONL serves as an append-only audit trail."""
+        """Attach a PersonaJsonlStore for canonical persistence.
+        All mutations will append to JSONL in addition to SQLite."""
         self._jsonl_store = store
         self._jsonl_session_id = session_id
 
@@ -218,7 +216,7 @@ class Rolodex:
         return ids
     def update_access(self, entry_id: str) -> None:
         """Increment access count and update last_accessed timestamp."""
-        now = datetime.utcnow().isoformat()
+        now = datetime.now(timezone.utc).isoformat()
         self.conn.execute(
             """UPDATE rolodex_entries
                SET access_count = access_count + 1, last_accessed = ?
@@ -230,7 +228,7 @@ class Rolodex:
         if entry_id in self._hot_cache:
             entry = self._hot_cache[entry_id]
             entry.access_count += 1
-            entry.last_accessed = datetime.utcnow()
+            entry.last_accessed = datetime.now(timezone.utc)
             self._hot_cache.move_to_end(entry_id)  # Phase 2: refresh LRU
     # ─── Enrichment Updates (Phase 8) ────────────────────────────────────
 
@@ -344,67 +342,6 @@ class Rolodex:
         """Update only the metadata field of an entry (merge with existing)."""
         self.update_entry_enrichment(entry_id=entry_id, metadata=metadata)
 
-    def reclassify_entry(
-        self,
-        entry_id: str,
-        category: Optional[str] = None,
-        source_type: Optional[str] = None,
-    ) -> bool:
-        """Reclassify an entry's category and/or source_type.
-
-        Unlike raw SQL updates, this method maintains all write
-        invariants: SQLite row, FTS index, JSONL audit trail, and
-        hot cache are all updated together. Used by the maintenance
-        reclassifier to avoid stale search state.
-        """
-        updates = []
-        params: list = []
-        fts_updates = []
-        fts_params: list = []
-        jsonl_data: Dict[str, Any] = {"id": entry_id}
-
-        if category is not None:
-            updates.append("category = ?")
-            params.append(category)
-            fts_updates.append("category = ?")
-            fts_params.append(category)
-            jsonl_data["category"] = category
-        if source_type is not None:
-            updates.append("source_type = ?")
-            params.append(source_type)
-            jsonl_data["source_type"] = source_type
-
-        if not updates:
-            return False
-
-        params.append(entry_id)
-        sql = f"UPDATE rolodex_entries SET {', '.join(updates)} WHERE id = ?"
-        try:
-            self.conn.execute(sql, params)
-            # Update FTS index if category changed
-            if fts_updates:
-                fts_params.append(entry_id)
-                self.conn.execute(
-                    f"UPDATE rolodex_fts SET {', '.join(fts_updates)} WHERE entry_id = ?",
-                    fts_params,
-                )
-            self.conn.commit()
-        except Exception:
-            return False
-
-        # JSONL audit trail
-        self._jsonl_append("rolodex_entry", "reclassify", entry_id, jsonl_data)
-
-        # Update hot cache if present
-        if entry_id in self._hot_cache:
-            entry = self._hot_cache[entry_id]
-            if category is not None:
-                try:
-                    entry.category = EntryCategory(category)
-                except (ValueError, KeyError):
-                    pass
-        return True
-
     # ─── Archive Operations ──────────────────────────────────────────────
     def archive_entry(self, entry_id: str, reason: str = "") -> bool:
         """
@@ -416,7 +353,7 @@ class Rolodex:
         For flatly incorrect entries (wrong personal details, etc.), use
         delete_entry() instead.
         """
-        now = datetime.utcnow().isoformat()
+        now = datetime.now(timezone.utc).isoformat()
         result = self.conn.execute(
             "UPDATE rolodex_entries SET archived_at = ? WHERE id = ? AND archived_at IS NULL",
             (now, entry_id)
@@ -712,15 +649,9 @@ class Rolodex:
     # ─── Topic-Scoped Search (Phase 8) ──────────────────────────────────
 
     def keyword_search_by_topic(
-        self, query: str, topic_id: str, limit: int = 5,
-        conversation_id: Optional[str] = None,
+        self, query: str, topic_id: str, limit: int = 5
     ) -> List[Tuple[RolodexEntry, float]]:
-        """Keyword search scoped to a specific topic.
-
-        Applies the same safety filters as the main keyword_search path:
-        archived entries are excluded, and an optional conversation_id
-        scope is respected.
-        """
+        """Keyword search scoped to a specific topic."""
         query = self._sanitize_fts_query(query)
         if not query.strip():
             return []
@@ -730,15 +661,9 @@ class Rolodex:
             JOIN rolodex_entries re ON re.id = fts.entry_id
             WHERE rolodex_fts MATCH ?
             AND re.topic_id = ?
-            AND re.archived_at IS NULL
+            ORDER BY fts.rank LIMIT ?
         """
-        params: list = [query, topic_id]
-        if conversation_id:
-            sql += " AND re.conversation_id = ?"
-            params.append(conversation_id)
-        sql += " ORDER BY fts.rank LIMIT ?"
-        params.append(limit)
-        rows = self.conn.execute(sql, params).fetchall()
+        rows = self.conn.execute(sql, (query, topic_id, limit)).fetchall()
         results = []
         for row in rows:
             entry = deserialize_entry(row)
@@ -754,11 +679,7 @@ class Rolodex:
             ]
             if len(terms) > 1:
                 or_query = ' OR '.join(terms)
-                or_params: list = [or_query, topic_id]
-                if conversation_id:
-                    or_params.append(conversation_id)
-                or_params.append(limit)
-                rows = self.conn.execute(sql, or_params).fetchall()
+                rows = self.conn.execute(sql, (or_query, topic_id, limit)).fetchall()
                 for row in rows:
                     entry = deserialize_entry(row)
                     score = min(1.0, abs(row["rank"]) / 10.0)
@@ -772,22 +693,13 @@ class Rolodex:
         topic_id: str,
         limit: int = 5,
         min_similarity: float = 0.3,
-        conversation_id: Optional[str] = None,
     ) -> List[Tuple[RolodexEntry, float]]:
-        """Semantic search scoped to a specific topic.
-
-        Applies the same safety filters as the main semantic_search path:
-        archived entries are excluded, and an optional conversation_id
-        scope is respected.
-        """
-        sql = """SELECT * FROM rolodex_entries
-               WHERE embedding IS NOT NULL AND topic_id = ?
-               AND archived_at IS NULL"""
-        params: list = [topic_id]
-        if conversation_id:
-            sql += " AND conversation_id = ?"
-            params.append(conversation_id)
-        rows = self.conn.execute(sql, params).fetchall()
+        """Semantic search scoped to a specific topic."""
+        rows = self.conn.execute(
+            """SELECT * FROM rolodex_entries
+               WHERE embedding IS NOT NULL AND topic_id = ?""",
+            (topic_id,)
+        ).fetchall()
         scored = []
         for row in rows:
             entry = deserialize_entry(row)
@@ -807,20 +719,13 @@ class Rolodex:
         keyword_weight: float = 0.4,
         semantic_weight: float = 0.6,
         min_similarity: float = 0.3,
-        conversation_id: Optional[str] = None,
     ) -> List[Tuple[RolodexEntry, float]]:
-        """Combined keyword + semantic search scoped to a topic.
-
-        Threads conversation_id and archived-entry filters through to
-        the underlying keyword and semantic searches for consistent
-        safety behavior with the main (non-topic) search paths.
-        """
+        """Combined keyword + semantic search scoped to a topic."""
         keyword_results = []
         semantic_results = []
         try:
             keyword_results = self.keyword_search_by_topic(
-                query, topic_id, limit=limit * 2,
-                conversation_id=conversation_id,
+                query, topic_id, limit=limit * 2
             )
         except Exception:
             pass
@@ -828,7 +733,6 @@ class Rolodex:
             semantic_results = self.semantic_search_by_topic(
                 query_embedding, topic_id, limit=limit * 2,
                 min_similarity=min_similarity,
-                conversation_id=conversation_id,
             )
         return _merge_search_results(
             keyword_results, semantic_results,
@@ -1075,7 +979,7 @@ class Rolodex:
         """Register a new conversation."""
         self.conn.execute(
             "INSERT OR IGNORE INTO conversations (id, created_at) VALUES (?, ?)",
-            (conversation_id, datetime.utcnow().isoformat())
+            (conversation_id, datetime.now(timezone.utc).isoformat())
         )
         self.conn.commit()
     def log_query(
@@ -1096,7 +1000,7 @@ class Rolodex:
             (
                 str(uuid.uuid4()), conversation_id, query_text,
                 found, json.dumps(entry_ids), search_time_ms,
-                search_type, datetime.utcnow().isoformat()
+                search_type, datetime.now(timezone.utc).isoformat()
             )
         )
         self.conn.commit()
@@ -1384,7 +1288,7 @@ class Rolodex:
     def get_behavioral_entries(self) -> List[RolodexEntry]:
         """Fetch all behavioral entries (compressed instruction documents).
 
-        These are YAML-like compressed versions of instruction documents.
+        These are YAML-like compressed versions of CLAUDE.md / INSTRUCTIONS.md.
         Always loaded at boot when prompt_compression is enabled, always HOT tier.
         """
         rows = self.conn.execute(
@@ -1441,7 +1345,7 @@ class Rolodex:
 
     def profile_set(self, key: str, value: str, session_id: Optional[str] = None) -> None:
         """Set or update a user profile preference (upsert)."""
-        now = datetime.utcnow().isoformat()
+        now = datetime.now(timezone.utc).isoformat()
         self.conn.execute(
             """INSERT INTO user_profile (key, value, source_session, updated_at)
                VALUES (?, ?, ?, ?)
@@ -1587,7 +1491,7 @@ class Rolodex:
         metadata: Optional[Dict[str, Any]] = None,
     ) -> str:
         """Register a document in the registry. Returns doc_id."""
-        now = datetime.utcnow().isoformat()
+        now = datetime.now(timezone.utc).isoformat()
         self.conn.execute(
             """INSERT INTO documents
                (id, file_name, file_path, file_type, file_hash, title,
@@ -1660,7 +1564,7 @@ class Rolodex:
 
     def update_document_read_time(self, doc_id: str) -> None:
         """Update last_read_at timestamp for a document."""
-        now = datetime.utcnow().isoformat()
+        now = datetime.now(timezone.utc).isoformat()
         self.conn.execute(
             "UPDATE documents SET last_read_at = ? WHERE id = ?",
             (now, doc_id)

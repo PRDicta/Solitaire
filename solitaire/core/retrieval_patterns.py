@@ -18,7 +18,7 @@ import json
 import re
 import sqlite3
 from collections import defaultdict
-from datetime import datetime, timedelta
+from datetime import datetime, timezone, timedelta
 from typing import Any, Dict, List, Optional, Set, Tuple
 
 
@@ -129,7 +129,7 @@ def detect_dead_zones(
                          "days_stale": float}]
     """
     if now is None:
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
 
     cutoff = (now - timedelta(days=stale_days)).isoformat()
 
@@ -230,7 +230,7 @@ def detect_gap_signals(
                          "last_asked": timestamp, "sample_queries": [str]}]
     """
     if now is None:
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
 
     cutoff = (now - timedelta(days=window_days)).isoformat()
 
@@ -303,7 +303,7 @@ def check_gap_for_query(
         Dict with gap info if a match is found, None otherwise.
     """
     if now is None:
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
 
     # Extract key terms from the query
     query_terms = _extract_key_terms(query)
@@ -381,7 +381,7 @@ def get_pattern_report(
         Dict with: hot_topics, dead_zones, gaps, generated_at timestamp.
     """
     if now is None:
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
 
     return {
         "hot_topics": detect_hot_topics(conn, window_sessions=window_sessions),

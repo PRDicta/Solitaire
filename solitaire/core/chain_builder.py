@@ -10,7 +10,7 @@ Two modes:
 """
 import uuid
 from typing import List, Optional
-from datetime import datetime
+from datetime import datetime, timezone
 
 from .types import ReasoningChain, Message, MessageRole
 from ..storage.rolodex import Rolodex
@@ -124,7 +124,7 @@ class ChainBuilder:
             topics=topics,
             related_entries=related_entry_ids,
             embedding=embedding,
-            created_at=datetime.utcnow(),
+            created_at=datetime.now(timezone.utc),
         )
 
     async def build_emergency_snapshot(
@@ -190,7 +190,7 @@ class ChainBuilder:
             topics=topics,
             related_entries=related_entry_ids,
             embedding=embedding,
-            created_at=datetime.utcnow(),
+            created_at=datetime.now(timezone.utc),
         )
 
     async def _summarize_with_llm(

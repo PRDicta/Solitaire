@@ -14,7 +14,7 @@ query-time routing.
 import json
 import uuid
 from typing import List, Optional, Dict, Tuple
-from datetime import datetime
+from datetime import datetime, timezone
 import numpy as np
 
 from ..core.types import RolodexEntry, LibrarianQuery
@@ -210,7 +210,7 @@ class TopicRouter:
         if provided. Returns topic_id.
         """
         topic_id = str(uuid.uuid4())
-        now = datetime.utcnow().isoformat()
+        now = datetime.now(timezone.utc).isoformat()
 
         # Compute topic embedding from seed entries
         embedding_blob = None
@@ -359,7 +359,7 @@ class TopicRouter:
         ).fetchone()["cnt"]
         self.conn.execute(
             "UPDATE topics SET entry_count = ?, last_updated = ? WHERE id = ?",
-            (count, datetime.utcnow().isoformat(), target_id)
+            (count, datetime.now(timezone.utc).isoformat(), target_id)
         )
         self.conn.commit()
 
@@ -442,7 +442,7 @@ class TopicRouter:
         source: str,
     ) -> None:
         """Record a topic assignment and update entry's topic_id."""
-        now = datetime.utcnow().isoformat()
+        now = datetime.now(timezone.utc).isoformat()
 
         # Record in assignment log
         self.conn.execute(

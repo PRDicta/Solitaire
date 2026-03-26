@@ -4,7 +4,7 @@ Accumulates per-call costs across embedding, extraction, and negotiation.
 Provides session totals and per-category breakdowns.
 """
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Dict, List
 
 
@@ -27,7 +27,7 @@ class APICall:
     input_tokens: int
     output_tokens: int
     cost_usd: float
-    timestamp: datetime = field(default_factory=datetime.utcnow)
+    timestamp: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
 
 class CostTracker:

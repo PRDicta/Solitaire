@@ -10,7 +10,7 @@ One paragraph, 40-80 tokens. Never longer. Not information — orientation.
 import json
 import os
 import sqlite3
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 
 from solitaire.core.types import estimate_tokens
@@ -55,7 +55,7 @@ def write_residue(
         warnings.append(f"Residue is only {tokens} tokens — may be too thin to prime effectively.")
 
     # Store in DB (rolodex_entries with a special source_type)
-    now = datetime.utcnow().isoformat()
+    now = datetime.now(timezone.utc).isoformat()
     try:
         conn.execute("""
             INSERT INTO rolodex_entries (

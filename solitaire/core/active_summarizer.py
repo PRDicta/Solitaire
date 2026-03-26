@@ -23,7 +23,7 @@ import re
 import sqlite3
 from dataclasses import dataclass, asdict, field
 from typing import Optional, Dict, Any, List
-from datetime import datetime
+from datetime import datetime, timezone
 
 
 # ─── Data Structures ─────────────────────────────────────────────────────────
@@ -56,7 +56,7 @@ class ProjectBrief:
     def __post_init__(self):
         """Validate bounds."""
         if not self.last_updated:
-            self.last_updated = datetime.utcnow().isoformat()
+            self.last_updated = datetime.now(timezone.utc).isoformat()
         if not 0.0 <= self.confidence <= 1.0:
             raise ValueError(f"confidence must be 0.0-1.0, got {self.confidence}")
         if len(self.key_facts) > 10:
@@ -256,7 +256,7 @@ class ActiveSummarizer:
                 brief="",
                 key_facts=[],
                 status="active",
-                last_updated=datetime.utcnow().isoformat(),
+                last_updated=datetime.now(timezone.utc).isoformat(),
                 entry_count=0,
                 confidence=0.0,
             )
@@ -284,7 +284,7 @@ class ActiveSummarizer:
         current.key_facts = existing_facts
         current.entry_count += 1
         current.confidence = min(1.0, current.entry_count / 20.0)
-        current.last_updated = datetime.utcnow().isoformat()
+        current.last_updated = datetime.now(timezone.utc).isoformat()
 
         # Store in database
         self._store_brief(current, entry_id)

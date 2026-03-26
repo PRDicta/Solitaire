@@ -55,9 +55,7 @@ class WorkingAgent:
         api_messages = self._build_messages(
             messages, user_input, retrieved_context, proactive_context
         )
-        import asyncio
-        response = await asyncio.to_thread(
-            self.client.messages.create,
+        response = self.client.messages.create(
             model=self.model,
             max_tokens=max_tokens,
             system=self.system_prompt,

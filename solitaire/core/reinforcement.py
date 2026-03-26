@@ -22,7 +22,7 @@ engine's near-duplicate pass may later merge them if they're close enough.
 
 import json
 import sqlite3
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import List, Optional, Tuple, Dict, Any
 
 from .confidence import (
@@ -127,7 +127,7 @@ def reinforce_entries(
     Returns the number of entries reinforced.
     """
     if now is None:
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
 
     reinforced_count = 0
 
@@ -190,7 +190,7 @@ def on_entry_created(
     Returns a summary dict with counts and target IDs.
     """
     if now is None:
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
 
     result = {
         "entry_id": entry_id,

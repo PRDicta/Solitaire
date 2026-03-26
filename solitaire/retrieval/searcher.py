@@ -60,9 +60,6 @@ class HybridSearcher:
             query_embedding = await self.embeddings.embed_text(query.query_text)
 
         # Step 3: Search cold storage
-        # Determine conversation_id scope (used by both topic and general search)
-        search_conv_id = None if cross_session else query.conversation_id
-
         # Phase 8: Topic-scoped search — try topic namespace first
         # Hierarchy-aware: if a parent topic matches, search all children too
         topic_id = None
@@ -80,7 +77,6 @@ class HybridSearcher:
                             topic_id=tid,
                             query_embedding=query_embedding,
                             limit=query.limit,
-                            conversation_id=search_conv_id,
                         )
                         topic_scoped_results.extend(results)
                     # Deduplicate and sort by score
@@ -95,6 +91,9 @@ class HybridSearcher:
                     topic_scoped_results = deduped[:query.limit]
             except Exception:
                 pass  # Topic routing failure is never a blocker
+
+        # Determine conversation_id scope
+        search_conv_id = None if cross_session else query.conversation_id
 
         # If topic-scoped search found enough results, use them;
         # otherwise fall back to full cross-topic search

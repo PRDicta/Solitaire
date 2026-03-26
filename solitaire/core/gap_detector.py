@@ -9,7 +9,7 @@ No LLM dependency. Regex-only. Host apps can use this independently
 to decide when to query The Librarian for retrieval.
 
 Usage:
-    from solitaire.core.gap_detector import detect_gap, extract_gap_topic
+    from src.core.gap_detector import detect_gap, extract_gap_topic
 
     response = "I don't have access to the configuration details..."
     topic = extract_gap_topic(response)

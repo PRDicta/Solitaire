@@ -10,7 +10,7 @@ All scoring is deterministic and pattern-based, making it explainable and tunabl
 import re
 from dataclasses import dataclass, asdict
 from typing import Optional, Dict, Any
-from datetime import datetime, timedelta
+from datetime import datetime, timezone, timedelta
 
 
 # ─── Data Structures ─────────────────────────────────────────────────────────
@@ -314,7 +314,7 @@ def compute_age_days(created_at: datetime, now: Optional[datetime] = None) -> fl
         Age in fractional days.
     """
     if now is None:
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
 
     delta = now - created_at
     return delta.total_seconds() / 86400.0  # 86400 = seconds per day

@@ -22,7 +22,7 @@ import re
 import sqlite3
 import uuid
 from collections import defaultdict
-from datetime import datetime, timedelta
+from datetime import datetime, timezone, timedelta
 from typing import Any, Dict, List, Optional, Set, Tuple
 
 from .memory_weight import (
@@ -62,7 +62,7 @@ def record_recall_outcomes(
     if not entry_ids:
         return 0
 
-    now = timestamp or datetime.utcnow()
+    now = timestamp or datetime.now(timezone.utc)
     count = 0
     for eid in entry_ids:
         outcome_id = str(uuid.uuid4())
@@ -200,7 +200,7 @@ def adjust_weights(
         Dict with: boosted count, penalized count, decayed count, details.
     """
     if now is None:
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
 
     stats = {"boosted": 0, "penalized": 0, "decayed": 0, "unchanged": 0}
 
@@ -470,16 +470,11 @@ def _penalize_significance(
 
     if weight:
         new_sig = max(SIGNIFICANCE_FLOOR, weight.significance - penalty)
-        if new_sig == weight.significance:
-            return False
         weight.significance = new_sig
-    else:
-        # No weight: create one with penalized default
-        weight = MemoryWeight(significance=max(SIGNIFICANCE_FLOOR, 0.3 - penalty))
-
-    new_metadata = merge_weight_into_metadata(metadata, weight)
-    conn.execute(
-        "UPDATE rolodex_entries SET metadata = ? WHERE id = ?",
-        (json.dumps(new_metadata), entry_id),
-    )
-    return True
+        metadata["memory_weight"] = weight.__dict__
+        conn.execute(
+            "UPDATE rolodex_entries SET metadata = ? WHERE id = ?",
+            (json.dumps(metadata), entry_id),
+        )
+        return True
+    return False

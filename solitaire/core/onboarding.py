@@ -405,7 +405,7 @@ def apply_scaffolding(
         Dict with applied scaffolding details.
     """
     import uuid
-    from datetime import datetime
+    from datetime import datetime, timezone
 
     registry = load_registry(templates_dir)
     scaffolding = get_template_scaffolding(template_key, registry)
@@ -423,7 +423,7 @@ def apply_scaffolding(
     seed_entries = scaffolding.get("seed_knowledge", [])
     for seed in seed_entries:
         entry_id = str(uuid.uuid4())
-        now = datetime.utcnow().isoformat()
+        now = datetime.now(timezone.utc).isoformat()
         try:
             rolodex_conn.execute(
                 "INSERT INTO rolodex_entries "

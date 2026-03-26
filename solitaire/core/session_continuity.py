@@ -198,7 +198,7 @@ class SessionContinuityEngine:
                 WHERE id = ?
                   AND status = 'active'
                   AND (summary IS NULL OR summary = '')
-            """, (summary.ended_at or datetime.utcnow().isoformat(),
+            """, (summary.ended_at or datetime.now(timezone.utc).isoformat(),
                   summary.summary, session_id))
             self.conn.commit()
             return cursor.rowcount > 0

@@ -277,13 +277,8 @@ def reflect_top(ctx, force):
 @click.option("--window", default=5, help="Number of recent sessions to analyze")
 @click.pass_context
 def patterns_top(ctx, window):
-    """Generate retrieval pattern report (alias for analytics patterns)."""
+    """Generate retrieval pattern report."""
     from ._engine import get_engine, output_json
     engine = get_engine(ctx)
-    result = engine.get_patterns(window_sessions=window)
+    result = engine.retrieval_patterns(window=window)
     output_json(result)
-
-
-def main():
-    """Entry point for the solitaire CLI."""
-    cli(standalone_mode=False)

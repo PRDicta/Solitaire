@@ -11,7 +11,6 @@ Scoring signals:
 3. Category match (from intent detection — biases toward relevant categories)
 4. Recency (newer entries get a mild boost)
 5. Access frequency (well-worn book principle — frequently accessed entries rank higher)
-6. Confidence (Hindsight reinforcement — entries confirmed by re-observation rank higher)
 
 No LLM calls — purely heuristic, runs in microseconds.
 """
@@ -20,7 +19,7 @@ from typing import List, Tuple, Optional, Set
 from dataclasses import dataclass, field
 from ..core.types import RolodexEntry
 from .entity_extractor import EntityExtractor, ExtractedEntities
-from ..core.confidence import extract_confidence_from_metadata
+from ..core.confidence import extract_confidence_from_metadata, compute_effective
 
 
 @dataclass
@@ -216,9 +215,8 @@ class Reranker:
             # Signal 3: Category match
             sc.category_score = self._score_category_match(entry, category_bias)
 
-            # Signal 4: Recency (use active config, not instance default,
-            # so fresh-mode's tighter horizon is actually applied)
-            sc.recency_score = self._score_recency(entry, now, active_config=cfg)
+            # Signal 4: Recency
+            sc.recency_score = self._score_recency(entry, now)
 
             # Signal 5: Access frequency
             sc.frequency_score = self._score_frequency(entry)
@@ -275,7 +273,7 @@ class Reranker:
             # If query asks about "what I said" (user attribution)
             # boost entries that have user attribution markers
             if query_entities.attribution == "user":
-                user_markers = ["user", "owner", "i said", "i asked", "my "]
+                user_markers = ["user", "philip", "i said", "i asked", "my "]
                 if any(m in content_lower for m in user_markers):
                     matches += 0.5
             elif query_entities.attribution == "assistant":
@@ -313,19 +311,11 @@ class Reranker:
 
         return 1.0 if cat_str in category_bias else 0.3
 
-    def _score_recency(
-        self, entry: RolodexEntry, now: float,
-        active_config: Optional[RerankerConfig] = None,
-    ) -> float:
+    def _score_recency(self, entry: RolodexEntry, now: float) -> float:
         """
         Score based on how recently the entry was created.
         Linear decay over the recency horizon.
-
-        Uses active_config when provided (e.g. fresh-mode override)
-        so that per-call horizon changes are respected instead of
-        silently falling back to the instance default.
         """
-        cfg = active_config or self.config
         if not hasattr(entry, "created_at") or entry.created_at is None:
             return 0.5  # Unknown age — neutral
 
@@ -337,7 +327,7 @@ class Reranker:
                 entry_time = float(entry.created_at)
 
             age_seconds = now - entry_time
-            horizon_seconds = cfg.recency_horizon_days * 86400
+            horizon_seconds = self.config.recency_horizon_days * 86400
 
             if age_seconds <= 0:
                 return 1.0
@@ -355,7 +345,7 @@ class Reranker:
         floor for entries at or above ceiling.
 
         This counteracts BM25's bias toward long documents: a 40,000-char
-        continuation summary that mentions key terms incidentally
+        continuation summary that mentions "Dicta" and "pipeline" incidentally
         shouldn't outscore a 345-char entry that IS the routing rule.
         """
         content_len = len(entry.content) if entry.content else 0

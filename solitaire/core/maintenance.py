@@ -152,7 +152,7 @@ def check_cooldown(
 
     _raw = row["completed_at"].replace('Z', '+00:00') if row["completed_at"] else None
     last_completed = datetime.fromisoformat(_raw).replace(tzinfo=None) if _raw else datetime.min
-    cutoff = datetime.utcnow() - timedelta(hours=cooldown_hours)
+    cutoff = datetime.now(timezone.utc) - timedelta(hours=cooldown_hours)
 
     return last_completed < cutoff, row["completed_at"]
 
@@ -194,6 +194,7 @@ class MaintenanceEngine:
         self.compressions_learned = 0
         self.behavioral_consolidated = 0
         self.uk_tier_changes = 0
+        self.confidence_decayed = 0
         self.entries_scanned = 0
         self.actions: List[Dict[str, Any]] = []
         self.passes_run: List[str] = []
@@ -260,7 +261,7 @@ class MaintenanceEngine:
             meta["maintenance_flags"].append({
                 "type": flag_type,
                 "detail": detail,
-                "flagged_at": datetime.utcnow().isoformat(),
+                "flagged_at": datetime.now(timezone.utc).isoformat(),
             })
             self.conn.execute(
                 "UPDATE rolodex_entries SET metadata = ? WHERE id = ?",
@@ -787,7 +788,7 @@ class MaintenanceEngine:
         self.passes_run.append("stale_temporal_flagging")
         flagged = 0
 
-        cutoff = datetime.utcnow() - timedelta(hours=self.stale_threshold_hours)
+        cutoff = datetime.now(timezone.utc) - timedelta(hours=self.stale_threshold_hours)
 
         # Temporal indicator patterns
         temporal_patterns = [
@@ -838,7 +839,7 @@ class MaintenanceEngine:
                     self.actions.append({
                         "type": "stale_flagged",
                         "entry_id": entry.id,
-                        "age_hours": round((datetime.utcnow() - entry.created_at).total_seconds() / 3600, 1),
+                        "age_hours": round((datetime.now(timezone.utc) - entry.created_at).total_seconds() / 3600, 1),
                         "pattern_matched": pattern,
                         "detail": f"Temporal claim may be outdated",
                     })
@@ -881,7 +882,7 @@ class MaintenanceEngine:
         if self._budget_remaining() <= 0:
             return 0
 
-        now = datetime.utcnow().isoformat()
+        now = datetime.now(timezone.utc).isoformat()
         learned = 0
 
         # ── Step 1: Confidence scoring ────────────────────────────────────
@@ -1195,7 +1196,7 @@ class MaintenanceEngine:
             meta = json.loads(row["metadata"]) if row["metadata"] else {}
             meta["priority"] = "core"
             meta["promoted_by_maintain"] = True
-            meta["promoted_at"] = datetime.utcnow().isoformat()
+            meta["promoted_at"] = datetime.now(timezone.utc).isoformat()
 
             self.conn.execute(
                 "UPDATE rolodex_entries SET metadata = ? WHERE id = ?",
@@ -1216,7 +1217,7 @@ class MaintenanceEngine:
             'always display', 'ingestion policy',
         ]
 
-        cutoff = (datetime.utcnow() - timedelta(days=30)).isoformat()
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=30)).isoformat()
         core_rows = self.conn.execute(
             """SELECT id, content, metadata, access_count FROM rolodex_entries
                WHERE category = 'user_knowledge'
@@ -1244,7 +1245,7 @@ class MaintenanceEngine:
             meta = json.loads(row["metadata"]) if row["metadata"] else {}
             meta["priority"] = "reference"
             meta["demoted_by_maintain"] = True
-            meta["demoted_at"] = datetime.utcnow().isoformat()
+            meta["demoted_at"] = datetime.now(timezone.utc).isoformat()
 
             self.conn.execute(
                 "UPDATE rolodex_entries SET metadata = ? WHERE id = ?",
@@ -1261,6 +1262,101 @@ class MaintenanceEngine:
         self.uk_tier_changes = changes
         return changes
 
+    # ─── Pass 9: Confidence Decay (Hindsight) ──────────────────────────
+
+    def pass_confidence_decay(self) -> int:
+        """
+        Apply time-based confidence decay to entries that haven't been
+        reinforced recently.
+
+        Scans entries that have a confidence score in their metadata and
+        recomputes the effective confidence based on time elapsed since
+        last reinforcement. Entries without a confidence score are skipped
+        (they'll get one on next access via the reinforcement pipeline).
+
+        Returns number of entries updated.
+        """
+        from .confidence import (
+            ConfidenceScore,
+            extract_confidence_from_metadata,
+            merge_confidence_into_metadata,
+            apply_decay,
+            CONFIDENCE_FLOORS,
+        )
+
+        self.passes_run.append("confidence_decay")
+        updated = 0
+        now = datetime.now(timezone.utc)
+
+        # Fetch entries that have confidence metadata
+        # We check for entries with metadata containing "confidence"
+        rows = self.conn.execute(
+            """SELECT id, metadata, category, provenance FROM rolodex_entries
+               WHERE superseded_by IS NULL
+               AND metadata LIKE '%"confidence"%'
+               ORDER BY created_at ASC
+               LIMIT ?""",
+            (self.max_entries_per_pass,)
+        ).fetchall()
+
+        for row in rows:
+            if self._budget_remaining() <= 0:
+                break
+
+            entry_id = row["id"]
+            metadata = json.loads(row["metadata"] or "{}")
+            category = row["category"]
+
+            try:
+                provenance = row["provenance"] or "unknown"
+            except (IndexError, KeyError):
+                provenance = "unknown"
+
+            score = extract_confidence_from_metadata(metadata)
+            if score is None:
+                continue
+
+            self.entries_scanned += 1
+
+            # Calculate days since last reinforcement
+            if score.last_reinforced_at:
+                try:
+                    last_dt = datetime.fromisoformat(
+                        score.last_reinforced_at.replace('Z', '+00:00')
+                    ).replace(tzinfo=None)
+                    days_elapsed = (now - last_dt).total_seconds() / 86400.0
+                except (ValueError, TypeError):
+                    days_elapsed = 0.0
+            else:
+                days_elapsed = 0.0
+
+            if days_elapsed < 1.0:
+                continue  # No point decaying entries reinforced today
+
+            # Apply decay
+            new_score = apply_decay(score, days_elapsed, category, provenance)
+
+            # Only write if effective score actually changed
+            if abs(new_score.effective - score.effective) < 0.001:
+                continue
+
+            metadata = merge_confidence_into_metadata(metadata, new_score)
+            self.conn.execute(
+                "UPDATE rolodex_entries SET metadata = ? WHERE id = ?",
+                (json.dumps(metadata), entry_id)
+            )
+            self.actions.append({
+                "type": "confidence_decayed",
+                "entry_id": entry_id,
+                "old_effective": score.effective,
+                "new_effective": new_score.effective,
+                "days_since_reinforcement": round(days_elapsed, 1),
+            })
+            updated += 1
+
+        self.confidence_decayed = updated
+        return updated
+
     # ─── Run All Passes ──────────────────────────────────────────────────
 
     def run_all(self) -> Dict[str, Any]:
@@ -1272,7 +1368,7 @@ class MaintenanceEngine:
         ensure_maintenance_schema(self.conn)
 
         log_id = str(uuid.uuid4())
-        started_at = datetime.utcnow().isoformat()
+        started_at = datetime.now(timezone.utc).isoformat()
 
         # Record start
         self.conn.execute(
@@ -1317,6 +1413,10 @@ class MaintenanceEngine:
             if self._budget_remaining() > 0:
                 self.pass_uk_tier_promotion()
 
+            # 9. Confidence decay (Hindsight)
+            if self._budget_remaining() > 0:
+                self.pass_confidence_decay()
+
             self.conn.commit()
         except Exception as e:
             # Log the error but don't crash
@@ -1325,12 +1425,13 @@ class MaintenanceEngine:
                 "detail": str(e),
             })
 
-        completed_at = datetime.utcnow().isoformat()
+        completed_at = datetime.now(timezone.utc).isoformat()
         total_actions = (
             self.contradictions_found + self.orphans_linked +
             self.duplicates_merged + self.entries_promoted +
             self.stale_flagged + self.compressions_learned +
-            self.behavioral_consolidated + self.uk_tier_changes
+            self.behavioral_consolidated + self.uk_tier_changes +
+            self.confidence_decayed
         )
 
         # Update log
@@ -1384,6 +1485,7 @@ class MaintenanceEngine:
                 "compressions_learned": self.compressions_learned,
                 "behavioral_consolidated": self.behavioral_consolidated,
                 "uk_tier_changes": self.uk_tier_changes,
+                "confidence_decayed": self.confidence_decayed,
                 "total_actions": total_actions,
             },
             "actions": self.actions,

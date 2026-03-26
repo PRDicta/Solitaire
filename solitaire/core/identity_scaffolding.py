@@ -15,7 +15,7 @@ already has identity nodes, seeding is skipped unless --force is passed.
 """
 import json
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Dict, List, Optional, Tuple
 
 from solitaire.storage.identity_graph import (
@@ -230,7 +230,7 @@ def seed_identity_for_persona(
     Returns:
         Dict with status, counts, and created node summaries.
     """
-    now = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%S")
+    now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
 
     # Check existing nodes (direct query since get_nodes_by_type requires a type)
     existing_count = ig.conn.execute(

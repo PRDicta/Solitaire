@@ -126,8 +126,8 @@ def _is_question_query(message: str) -> bool:
 
 
 # Patterns that extract the attribute being asked about.
-# "What is the user's last name?" -> attribute = "last name"
-# "What is the user's email?" -> attribute = "email"
+# "What is Philip's last name?" -> attribute = "last name"
+# "What is Philip's email?" -> attribute = "email"
 _ATTRIBUTE_PATTERNS = [
     re.compile(r"what(?:'s| is| was| are) (\w+)(?:'s|'s) (.+?)(?:\?|$)", re.I),
     re.compile(r"(?:do you (?:know|remember)) (\w+)(?:'s|'s) (.+?)(?:\?|$)", re.I),
@@ -143,8 +143,8 @@ def _compute_answer_signal(
     For question-type queries, check if the results contain content that
     looks like it answers the question. Returns 0-1.
 
-    The key insight: entity_hit_rate checks whether the owner's name appears in results,
-    but when asking "What is the user's last name?", the owner name will appear in
+    The key insight: entity_hit_rate checks whether "Philip" appears in results,
+    but when asking "What is Philip's last name?", "Philip" will appear in
     hundreds of entries. What matters is whether "last name" (the attribute)
     appears in any result.
     """
@@ -161,7 +161,7 @@ def _compute_answer_signal(
             attributes.append(attr)
 
     # Also extract key non-entity nouns from the question
-    # "What is the user's last name?" -> "last name"
+    # "What is Philip's last name?" -> "last name"
     # Strip the entity names and question words to get the attribute
     msg_lower = original_message.lower()
     _q_words = {'what', 'who', 'where', 'when', 'how', 'is', 'was', 'are',
@@ -178,7 +178,7 @@ def _compute_answer_signal(
         pass
 
     # Extract attribute words: non-question, non-entity words from the message.
-    # For "What is the user's last name?", entities are ["{owner}"] and
+    # For "What is Philip's last name?", entities are ["Philip"] and
     # attribute words are ["last", "name"].
     words = re.findall(r'\b\w+\b', msg_lower)
 
