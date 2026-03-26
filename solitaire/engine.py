@@ -1721,20 +1721,21 @@ class SolitaireEngine:
                 pass
 
         # Session residue (skip on cold boot)
+        _residue_meta = {}
         if not cold:
             try:
                 from .core.session_residue import load_latest_residue, build_residue_block
                 persona_dir_str = str(self.persona_dir / persona_key) if persona_key else None
-                residue_meta = load_latest_residue(
+                _residue_meta = load_latest_residue(
                     conn=self._lib.rolodex.conn,
                     current_session_id=self._session_id,
                     persona_key=persona_key,
                     persona_dir=persona_dir_str,
                 )
                 residue_block = build_residue_block(
-                    residue_meta.get("text", ""),
-                    timestamp=residue_meta.get("timestamp"),
-                    session_id=residue_meta.get("session_id"),
+                    _residue_meta.get("text", ""),
+                    timestamp=_residue_meta.get("timestamp"),
+                    session_id=_residue_meta.get("session_id"),
                 )
                 if residue_block:
                     blocks["residue"] = residue_block
@@ -1798,6 +1799,36 @@ class SolitaireEngine:
                     blocks["tool_proposals"] = proposal_block
         except Exception:
             pass  # Non-fatal — table may not exist yet
+
+        # ── Residue/Briefing Conflict Resolution ──────────────────────
+        # When a fresh residue exists, it IS the authoritative session
+        # handoff. The briefing's open-thread detection uses keyword
+        # scanning on old entries and can resurface work that was completed
+        # in the session that wrote the residue. Strip the briefing's
+        # "Open threads:" section when the residue is fresh enough to be
+        # the definitive source.
+        if blocks.get("residue") and blocks.get("briefing") and _residue_meta.get("text"):
+            _residue_ts = _residue_meta.get("timestamp", "")
+            _residue_fresh = False
+            if _residue_ts:
+                try:
+                    from datetime import datetime, timezone, timedelta
+                    _rts = _residue_ts.replace("Z", "+00:00")
+                    if "+" not in _rts and _rts.count("-") <= 2:
+                        _rdt = datetime.fromisoformat(_rts).replace(tzinfo=timezone.utc)
+                    else:
+                        _rdt = datetime.fromisoformat(_rts)
+                    _age_hours = (datetime.now(timezone.utc) - _rdt).total_seconds() / 3600
+                    _residue_fresh = _age_hours < 6
+                except Exception:
+                    pass
+            if _residue_fresh:
+                import re as _re_bt
+                blocks["briefing"] = _re_bt.sub(
+                    r'Open threads:\n(?:- [^\n]+\n)*\n?',
+                    '',
+                    blocks["briefing"],
+                )
 
         return blocks
 
