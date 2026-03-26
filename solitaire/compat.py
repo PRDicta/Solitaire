@@ -21,6 +21,9 @@ import sys
 from pathlib import Path
 from typing import List, Optional
 
+from solitaire.platform_utils import ensure_utf8
+ensure_utf8()
+
 
 def _resolve_workspace() -> str:
     """Resolve workspace directory using the same logic as the old CLI."""

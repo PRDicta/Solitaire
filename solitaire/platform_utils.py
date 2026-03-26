@@ -14,6 +14,42 @@ import sys
 from typing import Tuple
 
 
+def ensure_utf8() -> None:
+    """Force UTF-8 encoding on Windows.
+
+    Windows Python defaults to cp1252 for stdout, stderr, and open().
+    Any Unicode beyond that codepage (box-drawing, emoji, non-Latin)
+    raises UnicodeEncodeError. This patches all three: stdout, stderr,
+    and builtins.open so text-mode writes default to UTF-8.
+
+    No-op on macOS/Linux (already UTF-8).
+    Safe to call multiple times.
+    """
+    if sys.platform != "win32":
+        return
+
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8")
+    if hasattr(sys.stderr, "reconfigure"):
+        sys.stderr.reconfigure(encoding="utf-8")
+
+    import builtins
+    if getattr(builtins.open, "_utf8_patched", False):
+        return  # Already patched
+
+    _original_open = builtins.open
+
+    def _utf8_open(*args, **kwargs):
+        if kwargs.get("encoding") is None:
+            mode = args[1] if len(args) > 1 else kwargs.get("mode", "r")
+            if "b" not in str(mode):
+                kwargs["encoding"] = "utf-8"
+        return _original_open(*args, **kwargs)
+
+    _utf8_open._utf8_patched = True
+    builtins.open = _utf8_open
+
+
 def get_system() -> str:
     """Return normalized platform identifier.
 
