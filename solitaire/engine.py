@@ -1939,13 +1939,30 @@ class SolitaireEngine:
         }
 
     def _build_operations_block(self) -> str:
-        """Build the operations/rules block for the session."""
-        return (
-            "# Session Operations\n\n"
+        """Build the operations/rules block for the session.
+
+        Pulls behavioral genome (attention patterns, rhythm, memory priorities,
+        triggers) from the persona profile so that persona-specific behavioral
+        instructions reach the model at inference time.
+        """
+        sections = []
+
+        sections.append("# Session Operations\n")
+        sections.append(
             "## Per-Turn Protocol\n"
             "1. Auto-recall before composing each response (from turn 2)\n"
             "2. Ingest-turn after each exchange\n"
-            "3. Residue write after each ingest-turn\n\n"
+            "3. Residue write after each ingest-turn\n"
+        )
+
+        # ── Behavioral Genome from Persona ──────────────────────────
+        if self._lib.persona:
+            genome = self._build_behavioral_genome()
+            if genome:
+                sections.append(genome)
+
+        # ── Writing Standards ────────────────────────────────────────
+        sections.append(
             "## Writing Standards (MANDATORY, all responses)\n"
             "Ref: solitaire/ai_writing_tells.md (23 categories: 13 surface + 2 structural + 8 interactional)\n\n"
             "Cursed cluster: delve, intricate, tapestry, pivotal, underscore(v), landscape(met),\n"
@@ -1958,6 +1975,148 @@ class SolitaireEngine:
             "No false ranges. No bloated phrasing. Vague superlatives need evidence. Weasel words need attribution.\n"
             "Scan for tell clustering before sending anything >3 sentences.\n"
         )
+
+        return "\n".join(sections)
+
+    def _build_behavioral_genome(self) -> str:
+        """Build behavioral genome from persona profile.
+
+        Renders attention patterns, conversational rhythm, memory priorities,
+        and triggers into natural-language instructions the model can act on.
+        """
+        p = self._lib.persona
+        if not p:
+            return ""
+
+        parts = []
+
+        # ── Attention Patterns ──────────────────────────────────────
+        if hasattr(p, 'attention') and p.attention:
+            attn = p.attention
+            effective_obs = p.traits.observance if hasattr(p.traits, 'observance') else 0.5
+            lines = ["## Attention Patterns"]
+            lines.append(f"Flag style: {getattr(attn, 'flag_style', 'inline')}")
+
+            active_flags = attn.get_active_flags(effective_obs) if hasattr(attn, 'get_active_flags') else getattr(attn, 'always_flag', [])
+            if active_flags:
+                lines.append("Always flag (observance threshold met):")
+                for item in active_flags:
+                    cat = getattr(item, 'category', item.get('category', '')) if hasattr(item, 'category') or isinstance(item, dict) else str(item)
+                    desc = getattr(item, 'description', item.get('description', '')) if hasattr(item, 'description') or isinstance(item, dict) else ''
+                    lines.append(f"  - {cat}: {desc}")
+
+            never_flag = getattr(attn, 'never_flag', [])
+            if never_flag:
+                lines.append("Never flag:")
+                for nf in never_flag:
+                    lines.append(f"  - {nf}")
+
+            parts.append("\n".join(lines))
+
+        # ── Conversational Rhythm ───────────────────────────────────
+        if hasattr(p, 'rhythm') and p.rhythm:
+            rhy = p.rhythm
+            lines = ["## Conversational Rhythm"]
+            lines.append(f"Default verbosity: {getattr(rhy, 'default_verbosity', 'moderate')}")
+
+            _rhythm_bands = {
+                "tangent_tolerance": {
+                    "high": "Tangent tolerance: high -- follow interesting side threads freely",
+                    "moderate": "Tangent tolerance: moderate -- follow relevant tangents, gently redirect others",
+                    "low": "Tangent tolerance: low -- stay on topic, redirect if conversation drifts",
+                },
+                "silence_comfort": {
+                    "high": "Silence comfort: high -- short replies are fine, don't pad responses",
+                    "moderate": "Silence comfort: moderate -- brief is fine, but don't leave gaps that feel abrupt",
+                    "low": "Silence comfort: low -- fill gaps, provide context proactively",
+                },
+                "action_bias": {
+                    "high": "Action bias: high -- prefer doing over discussing. Build, ship, execute.",
+                    "moderate": "Action bias: moderate -- act on clear tasks, discuss ambiguous ones",
+                    "low": "Action bias: low -- discuss before doing. Verify intent, confirm scope.",
+                },
+            }
+            for param_name, bands in _rhythm_bands.items():
+                val = getattr(rhy, param_name, 0.5)
+                if val >= 0.7:
+                    lines.append(bands["high"])
+                elif val >= 0.4:
+                    lines.append(bands["moderate"])
+                else:
+                    lines.append(bands["low"])
+
+            elab_desc = {
+                "ask": "Elaborate only when the user asks for more detail",
+                "offer": 'Offer to elaborate ("Want me to go deeper on X?") but don\'t auto-expand',
+                "automatic": "Elaborate automatically when the topic warrants depth",
+            }
+            elab = getattr(rhy, 'elaboration_trigger', 'ask')
+            lines.append(f"Elaboration: {elab_desc.get(elab, elab)}")
+
+            parts.append("\n".join(lines))
+
+        # ── Memory Priorities ───────────────────────────────────────
+        if hasattr(p, 'memory_priorities') and p.memory_priorities:
+            mem = p.memory_priorities
+            high_w = getattr(mem, 'high_weight', [])
+            normal_w = getattr(mem, 'normal_weight', [])
+            low_w = getattr(mem, 'low_weight', [])
+            if high_w or low_w:
+                lines = ["## Memory Priorities"]
+                lines.append("When recalling past context, weight these categories:")
+                if high_w:
+                    lines.append(f"  HIGH priority (2x boost): {', '.join(high_w)}")
+                if normal_w:
+                    lines.append(f"  NORMAL priority (1x): {', '.join(normal_w)}")
+                if low_w:
+                    lines.append(f"  LOW priority (0.5x): {', '.join(low_w)}")
+                lines.append("Use these weights to prioritize which recalled entries to foreground in responses.")
+                parts.append("\n".join(lines))
+
+        # ── Triggers ────────────────────────────────────────────────
+        if hasattr(p, 'triggers') and p.triggers:
+            triggers = p.triggers
+            lines = ["## Behavioral Triggers"]
+
+            conv_overrides = getattr(triggers, 'conviction_overrides', [])
+            if conv_overrides:
+                lines.append("Conviction overrides (act on these even at moderate conviction):")
+                for t in conv_overrides:
+                    cond = getattr(t, 'condition', '') if not isinstance(t, dict) else t.get('condition', '')
+                    action = getattr(t, 'action', '') if not isinstance(t, dict) else t.get('action', '')
+                    lines.append(f"  - When: {cond} -> {action}")
+
+            init_triggers = getattr(triggers, 'initiative_triggers', [])
+            if init_triggers:
+                lines.append("Initiative triggers (act proactively when detected):")
+                for t in init_triggers:
+                    cond = getattr(t, 'condition', '') if not isinstance(t, dict) else t.get('condition', '')
+                    action = getattr(t, 'action', '') if not isinstance(t, dict) else t.get('action', '')
+                    lines.append(f"  - When: {cond} -> {action}")
+
+            if len(lines) > 1:
+                parts.append("\n".join(lines))
+
+        # ── Greeting Protocol ───────────────────────────────────────
+        if hasattr(p, 'greeting') and p.greeting:
+            greet = p.greeting
+            lines = ["## Greeting Protocol"]
+            style = getattr(greet, 'style', 'direct')
+            lines.append(f"Style: {style}")
+            mem_ref = getattr(greet, 'memory_reference', True)
+            if mem_ref:
+                lines.append("Reference prior context when greeting (natural memory weave)")
+            examples = getattr(greet, 'examples', {})
+            if examples:
+                lines.append("Examples by warmth level:")
+                for warmth_level, example in (examples.items() if isinstance(examples, dict) else []):
+                    lines.append(f"  {warmth_level}: \"{example}\"")
+            parts.append("\n".join(lines))
+
+        if not parts:
+            return ""
+
+        return "\n\n".join(parts) + "\n"
 
     def _build_cognitive_profile(self) -> str:
         """Build the cognitive profile block from persona data."""
@@ -1976,17 +2135,66 @@ class SolitaireEngine:
             lines.append(f"Primary domain: {identity.domain_scope}")
         lines.append("")
         lines.append("Disposition:")
+        # All 7 trait dimensions with intensity-scaled descriptions.
+        # Every trait is rendered regardless of value. A warmth of 0.55 is
+        # "moderate warmth" not "no warmth" -- omission erases personality.
         trait_descriptions = {
-            "observance": ("highly observant", "flags patterns, anomalies, and things the user might miss"),
-            "assertiveness": ("direct and concise", "no hedging, data-first delivery"),
-            "conviction": ("high conviction", "pushes back with evidence when the user may be wrong"),
-            "initiative": ("proactive", "initiates, suggests, and builds without being asked"),
+            "observance": {
+                "high": ("highly observant", "flags patterns, anomalies, and things the user might miss"),
+                "moderate": ("observant", "notices patterns and inconsistencies"),
+                "low": ("selectively observant", "focuses on what's directly relevant"),
+            },
+            "assertiveness": {
+                "high": ("direct and concise", "no hedging, data-first delivery"),
+                "moderate": ("measured directness", "states positions clearly but picks moments"),
+                "low": ("gentle", "leads with questions, offers rather than asserts"),
+            },
+            "conviction": {
+                "high": ("high conviction", "pushes back with evidence when the user may be wrong"),
+                "moderate": ("steady conviction", "holds positions but stays open to counter-evidence"),
+                "low": ("exploratory", "prefers to weigh options rather than commit early"),
+            },
+            "warmth": {
+                "high": ("warm", "builds rapport, invests in the person behind the task"),
+                "moderate": ("moderate warmth", "professional but not cold, reads the room"),
+                "low": ("reserved", "keeps focus on the work, warmth is earned not performed"),
+            },
+            "humor": {
+                "high": ("witty", "uses humor naturally, lightens tension without undermining substance"),
+                "moderate": ("dry humor", "occasional levity when it fits, never forces it"),
+                "low": ("serious-toned", "humor is rare and deliberate, defaults to substance"),
+            },
+            "initiative": {
+                "high": ("proactive", "initiates, suggests, and builds without being asked"),
+                "moderate": ("responsive initiative", "acts independently on familiar ground, checks on new territory"),
+                "low": ("responsive", "waits for direction, executes precisely what's asked"),
+            },
+            "empathy": {
+                "high": ("empathetic", "tracks emotional undercurrents and adjusts approach accordingly"),
+                "moderate": ("emotionally aware", "reads the room, gives space when it matters"),
+                "low": ("task-focused", "prioritizes the work, engages emotionally when directly relevant"),
+            },
         }
         trait_dict = traits.to_dict() if hasattr(traits, 'to_dict') else {}
-        for trait_name, (label, desc) in trait_descriptions.items():
+        baseline_dict = {}
+        if hasattr(p, '_baseline_traits') and p._baseline_traits:
+            baseline_dict = p._baseline_traits.to_dict() if hasattr(p._baseline_traits, 'to_dict') else {}
+        for trait_name, bands in trait_descriptions.items():
             val = trait_dict.get(trait_name, 0.5)
             if val >= 0.7:
-                lines.append(f"- {label} \u2014 {desc}")
+                label, desc = bands["high"]
+            elif val >= 0.4:
+                label, desc = bands["moderate"]
+            else:
+                label, desc = bands["low"]
+            line = f"- {label} \u2014 {desc}"
+            # Show drift direction if trait has moved from baseline
+            base_val = baseline_dict.get(trait_name)
+            if base_val is not None and abs(val - base_val) >= 0.005:
+                drift_dir = "\u2191" if val > base_val else "\u2193"
+                lines.append(f"{line} (drift: {drift_dir}{abs(val - base_val):.2f})")
+            else:
+                lines.append(line)
 
         lines.append("")
         lines.append("\u2550\u2550\u2550 END COGNITIVE PROFILE \u2550\u2550\u2550")
