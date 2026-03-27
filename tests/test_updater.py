@@ -6,6 +6,7 @@ migration execution, and update checker.
 """
 import json
 import sqlite3
+import subprocess
 import tempfile
 from pathlib import Path
 from unittest.mock import patch, MagicMock
@@ -440,7 +441,6 @@ class TestUpdateChecker:
     def test_cache_is_used(self, tmp_path):
         """Cached results are returned without network call."""
         checker = UpdateChecker(tmp_path, "1.2.0")
-        # Write a cache entry
         from datetime import datetime, timezone
         cache_data = {
             "cached_at": datetime.now(timezone.utc).isoformat(),
@@ -448,7 +448,7 @@ class TestUpdateChecker:
                 "update_available": True,
                 "current_version": "1.2.0",
                 "latest_version": "1.3.0",
-                "download_url": "https://example.com/update.zip",
+                "tag": "v1.3.0",
                 "release_notes": "New features",
                 "html_url": "https://github.com/example",
             },
@@ -470,6 +470,43 @@ class TestUpdateChecker:
         checker = UpdateChecker(tmp_path, "1.2.0")
         result = checker.check()
         assert result is None
+
+    def test_has_git_false(self, tmp_path):
+        """Non-git workspace returns False."""
+        checker = UpdateChecker(tmp_path, "1.2.0")
+        assert checker.has_git() is False
+
+    def test_has_git_true(self, tmp_path):
+        """Git workspace returns True."""
+        (tmp_path / ".git").mkdir()
+        checker = UpdateChecker(tmp_path, "1.2.0")
+        assert checker.has_git() is True
+
+    def test_bootstrap_creates_git_repo(self, tmp_path):
+        """Bootstrap initializes git and adds remote."""
+        checker = UpdateChecker(tmp_path, "1.2.0")
+        result = checker._bootstrap_git()
+        assert result["ok"] is True
+        assert (tmp_path / ".git").exists()
+
+        # Verify remote was added
+        import subprocess
+        remote = subprocess.run(
+            ["git", "remote", "-v"],
+            capture_output=True, text=True, cwd=str(tmp_path),
+        )
+        assert "origin" in remote.stdout
+        assert "Solitaire-for-Agents" in remote.stdout
+
+    def test_apply_update_no_git_binary(self, tmp_path):
+        """apply_update fails gracefully when git isn't available."""
+        checker = UpdateChecker(tmp_path, "1.2.0")
+        with patch("solitaire.core.update_checker.subprocess") as mock_sub:
+            mock_sub.run.side_effect = FileNotFoundError("git not found")
+            mock_sub.TimeoutExpired = subprocess.TimeoutExpired
+            result = checker.apply_update("1.3.0")
+        assert result["status"] == "error"
+        assert "git not found" in result["message"]
 
 
 # ---------------------------------------------------------------------------

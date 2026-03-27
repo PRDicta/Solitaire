@@ -1033,6 +1033,7 @@ class SolitaireEngine:
             message=message,
             conn=self._lib.rolodex.conn,
             session_id=self._session_id,
+            workspace_dir=str(self.workspace_dir),
         )
 
         output = {
@@ -2371,6 +2372,7 @@ class SolitaireEngine:
                 message=message,
                 conn=self._lib.rolodex.conn if self._lib else None,
                 session_id=self._session_id,
+                workspace_dir=str(self.workspace_dir),
             )
             preflight = {
                 "context_block": result.context_block if result else "",
