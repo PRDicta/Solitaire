@@ -74,6 +74,27 @@ class SolitaireEngine:
         self._mode = "verbatim"  # "verbatim" (no API key) or "enhanced" (with LLM)
         self._booted = False
 
+    # ─── Async bridge ──────────────────────────────────────────────────────
+
+    def _run_async(self, coro):
+        """Run an async coroutine synchronously.
+
+        Handles two cases:
+        - No running event loop (CLI, scripts): uses asyncio.run()
+        - Inside a running loop (embedded in async app): runs in a thread
+        """
+        import asyncio
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = None
+
+        if loop and loop.is_running():
+            import concurrent.futures
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+                return pool.submit(asyncio.run, coro).result()
+        return asyncio.run(coro)
+
     # ─── Boot ─────────────────────────────────────────────────────────────
 
     def boot_pre_persona(self) -> Dict[str, Any]:
@@ -115,14 +136,27 @@ class SolitaireEngine:
             Dict with: status, session_id, persona info, boot_files paths,
             total_entries, first_turn_briefed flag.
         """
+        old_session_id = None
         if resume:
             persona_key = self._load_session_persona() or persona_key
+            old_session_id = self._load_session_id()
 
         self._persona_key = persona_key
 
         # Initialize TheLibrarian
         self._lib = self._make_librarian(persona_key=persona_key)
-        self._session_id = self._lib.session_id
+
+        # If resuming, try to restore the prior session's state
+        if old_session_id:
+            session_info = self._lib.resume_session(old_session_id)
+            if session_info:
+                self._session_id = old_session_id
+            else:
+                # Prior session not found in DB; fall back to fresh session
+                self._session_id = self._lib.session_id
+        else:
+            self._session_id = self._lib.session_id
+
         self._mode = "enhanced" if self._lib._llm_adapter else "verbatim"
 
         # Save session state
@@ -2119,6 +2153,15 @@ class SolitaireEngine:
             with open(self._session_file, "r") as f:
                 data = json.load(f)
             return data.get("persona_key")
+        except Exception:
+            return None
+
+    def _load_session_id(self) -> Optional[str]:
+        """Load the last session ID from session state."""
+        try:
+            with open(self._session_file, "r") as f:
+                data = json.load(f)
+            return data.get("session_id")
         except Exception:
             return None
 
