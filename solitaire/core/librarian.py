@@ -168,6 +168,28 @@ class TheLibrarian:
                 pause_on_query=getattr(self.config, 'ingestion_pause_on_query', True),
             )
 
+        # ─── JSONL Audit Trail ────────────────────────────────────────
+        # Append-only JSONL alongside the SQLite DB for audit/traceability.
+        # Non-fatal: if JSONL setup fails, SQLite remains authoritative.
+        self._jsonl_store = None
+        try:
+            from ..storage.jsonl_store import PersonaJsonlStore
+            import os
+            jsonl_dir = os.path.dirname(os.path.abspath(db_path))
+            self._jsonl_store = PersonaJsonlStore(jsonl_dir)
+            # Wire into rolodex for entry audit trail
+            self.rolodex.attach_jsonl_store(
+                self._jsonl_store,
+                session_id=self.state.conversation_id,
+            )
+            # Wire into topic router for metadata persistence
+            self.topic_router.attach_jsonl_store(
+                self._jsonl_store.metadata,
+                session_id=self.state.conversation_id,
+            )
+        except Exception:
+            pass  # JSONL is optional audit trail
+
         # ─── Context Window Manager (Phase 9) ────────────────────────
         self.context_window = ContextWindowManager(
             token_budget=getattr(self.config, 'context_window_budget', 20_000),

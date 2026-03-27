@@ -41,6 +41,8 @@ class TriggerResult:
     signals_detected: List[str] = field(default_factory=list)
     skip_recall: bool = False  # True if message needs no context (greetings, acks)
     temporal_only: bool = False  # True if this is a pure temporal query (bypass FTS, use session digests)
+    matched_topics: List[Tuple[str, int, float]] = field(default_factory=list)    # (label, entry_count, confidence)
+    matched_projects: List[Tuple[str, float]] = field(default_factory=list)       # (name, confidence)
 
 
 # ─── Back-Reference Patterns ────────────────────────────────────────────────
@@ -91,7 +93,7 @@ class _TopicCache:
             return
         try:
             rows = conn.execute(
-                "SELECT label, entry_count FROM topics WHERE entry_count >= 3 ORDER BY entry_count DESC"
+                "SELECT label, entry_count FROM topics WHERE entry_count >= 1 ORDER BY entry_count DESC"
             ).fetchall()
             for row in rows:
                 label = row["label"] if isinstance(row, sqlite3.Row) else row[0]
@@ -149,7 +151,7 @@ class _ProjectCache:
             return
         try:
             rows = conn.execute(
-                "SELECT id, name, keywords, entry_count FROM project_clusters WHERE entry_count >= 3"
+                "SELECT id, name, keywords, entry_count FROM project_clusters WHERE entry_count >= 1"
             ).fetchall()
             for row in rows:
                 name = row["name"] if isinstance(row, sqlite3.Row) else row[1]
@@ -226,10 +228,11 @@ class RecallTrigger:
                 result.skip_recall = True
                 return result
 
-        # Very short messages (< 2 words) are unlikely to need recall.
-        # Two-word messages like "project status" or "weekly review" ARE meaningful
-        # topic references and should proceed to topic/project matching.
-        if len(message_stripped.split()) < 2:
+        # Very short messages: single words under 3 chars are noise.
+        # Single meaningful words like "Solitaire" or "Librarian" should
+        # still trigger recall (skip patterns already catch greetings/acks).
+        words = message_stripped.split()
+        if len(words) == 1 and len(words[0]) < 3:
             result.skip_recall = True
             return result
 
@@ -320,6 +323,7 @@ class RecallTrigger:
         topic_matches = self._topic_cache.match(message)
         if topic_matches:
             result.signals_detected.append("topic_match")
+            result.matched_topics = topic_matches
             for label, count, confidence in topic_matches[:2]:
                 result.queries.append(RecallQuery(
                     query=label,
@@ -331,6 +335,7 @@ class RecallTrigger:
         project_matches = self._project_cache.match(message)
         if project_matches:
             result.signals_detected.append("project_match")
+            result.matched_projects = project_matches
             for name, confidence in project_matches[:2]:
                 result.queries.append(RecallQuery(
                     query=name,
