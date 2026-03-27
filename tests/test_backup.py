@@ -216,6 +216,96 @@ class TestListBackups:
         assert backups[0]["modified"] >= backups[1]["modified"]
 
 
+@pytest.fixture
+def workspace_with_personas(workspace):
+    """Workspace with both rolodex.db and personas/ directory."""
+    persona_dir = workspace / "personas"
+    persona_dir.mkdir()
+    (persona_dir / "persona_registry.yaml").write_text("default: default.yaml\n")
+    (persona_dir / "default.yaml").write_text(
+        "name: Solitary Librarian\ntraits:\n  warmth: 0.8\n"
+    )
+    (persona_dir / "default_state.json").write_text('{"effective_traits": {}}')
+    return workspace
+
+
+@pytest.fixture
+def manager_with_personas(workspace_with_personas):
+    """BackupManager with personas available."""
+    return BackupManager(
+        workspace_dir=workspace_with_personas,
+        db_path=workspace_with_personas / "rolodex.db",
+        retention_count=3,
+        max_age_hours=24.0,
+    )
+
+
+class TestPersonaBackup:
+    def test_creates_persona_backup(self, manager_with_personas):
+        result = manager_with_personas.create_persona_backup("20260327_120000_000000")
+        assert result["status"] == "ok"
+        assert result["file_count"] == 3
+
+    def test_backup_contains_all_files(self, manager_with_personas):
+        result = manager_with_personas.create_persona_backup("20260327_120000_000000")
+        backup_path = Path(result["path"])
+        files = {f.name for f in backup_path.rglob("*") if f.is_file()}
+        assert "persona_registry.yaml" in files
+        assert "default.yaml" in files
+        assert "default_state.json" in files
+
+    def test_skip_when_no_personas(self, manager):
+        result = manager.create_persona_backup("20260327_120000_000000")
+        assert result["status"] == "skip"
+
+    def test_skip_when_empty_personas_dir(self, workspace):
+        (workspace / "personas").mkdir()
+        bm = BackupManager(
+            workspace_dir=workspace,
+            db_path=workspace / "rolodex.db",
+        )
+        result = bm.create_persona_backup("20260327_120000_000000")
+        assert result["status"] == "skip"
+
+    def test_persona_backup_naming(self, manager_with_personas):
+        result = manager_with_personas.create_persona_backup("20260327_120000_000000")
+        assert result["dirname"] == "personas_20260327_120000_000000"
+
+    def test_rotate_personas(self, manager_with_personas):
+        for i in range(5):
+            manager_with_personas.create_persona_backup(f"20260327_12000{i}_000000")
+            time.sleep(0.1)
+
+        dirs_before = manager_with_personas._persona_backup_dirs()
+        assert len(dirs_before) == 5
+
+        deleted = manager_with_personas.rotate_personas()
+        assert len(deleted) == 2
+
+        dirs_after = manager_with_personas._persona_backup_dirs()
+        assert len(dirs_after) == 3
+
+
+class TestCheckAndBackupWithPersonas:
+    def test_backs_up_both_db_and_personas(self, manager_with_personas):
+        result = manager_with_personas.check_and_backup()
+        assert result["status"] == "ok"
+        assert "personas" in result
+        assert result["personas"]["status"] == "ok"
+
+    def test_shared_timestamp(self, manager_with_personas):
+        result = manager_with_personas.check_and_backup()
+        # Extract timestamps from both backup names
+        db_ts = result["filename"].replace("rolodex_", "").replace(".db", "")
+        persona_ts = result["personas"]["dirname"].replace("personas_", "")
+        assert db_ts == persona_ts
+
+    def test_db_backup_works_without_personas(self, manager):
+        result = manager.check_and_backup()
+        assert result["status"] == "ok"
+        assert result["personas"]["status"] == "skip"
+
+
 class TestConfigIntegration:
     def test_from_config(self, workspace):
         config = LibrarianConfig(

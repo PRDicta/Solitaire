@@ -1,11 +1,16 @@
 """
 Solitaire — Rolling Backup Manager
 
-Atomic SQLite backups with configurable retention and staleness checks.
-Triggered on boot when the latest backup exceeds max_age_hours.
+Atomic SQLite backups and persona config snapshots with configurable
+retention and staleness checks. Triggered on boot when the latest
+backup exceeds max_age_hours.
+
+Safety invariant: user data (rolodex.db AND personas/) is always
+backed up together. Code can be re-downloaded; user data cannot.
 """
 import logging
 import os
+import shutil
 import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
@@ -15,10 +20,11 @@ logger = logging.getLogger(__name__)
 
 
 class BackupManager:
-    """Manages rolling SQLite backups for the rolodex database."""
+    """Manages rolling backups for rolodex database AND persona configs."""
 
     BACKUP_PREFIX = "rolodex_"
     BACKUP_SUFFIX = ".db"
+    PERSONA_PREFIX = "personas_"
 
     def __init__(
         self,
@@ -78,8 +84,11 @@ class BackupManager:
         ) / 3600
         return age_hours >= self.max_age_hours
 
-    def create_backup(self) -> Dict[str, Any]:
+    def create_backup(self, timestamp: Optional[str] = None) -> Dict[str, Any]:
         """Create an atomic SQLite backup using conn.backup().
+
+        Args:
+            timestamp: Optional shared timestamp string. Generated if not provided.
 
         Returns:
             Dict with path, size_bytes, timestamp, or error.
@@ -89,7 +98,8 @@ class BackupManager:
 
         self.backup_dir.mkdir(parents=True, exist_ok=True)
 
-        timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S_%f")
+        if timestamp is None:
+            timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S_%f")
         backup_name = f"{self.BACKUP_PREFIX}{timestamp}{self.BACKUP_SUFFIX}"
         backup_path = self.backup_dir / backup_name
 
@@ -121,6 +131,76 @@ class BackupManager:
                     pass
             return {"status": "error", "reason": str(e)}
 
+    # --- Persona backup ---
+
+    def _persona_dir(self) -> Path:
+        """Return the personas directory."""
+        return self.workspace_dir / "personas"
+
+    def _persona_backup_dirs(self) -> List[Path]:
+        """Return existing persona backup directories sorted newest-first."""
+        if not self.backup_dir.exists():
+            return []
+        dirs = [
+            d for d in self.backup_dir.iterdir()
+            if d.name.startswith(self.PERSONA_PREFIX)
+            and d.is_dir()
+        ]
+        dirs.sort(key=lambda d: d.stat().st_mtime, reverse=True)
+        return dirs
+
+    def create_persona_backup(self, timestamp: str) -> Dict[str, Any]:
+        """Copy the entire personas/ directory to backups/.
+
+        Returns:
+            Dict with path, file_count, or error.
+        """
+        persona_dir = self._persona_dir()
+        if not persona_dir.exists() or not any(persona_dir.iterdir()):
+            return {"status": "skip", "reason": "no_personas"}
+
+        self.backup_dir.mkdir(parents=True, exist_ok=True)
+        backup_name = f"{self.PERSONA_PREFIX}{timestamp}"
+        backup_path = self.backup_dir / backup_name
+
+        try:
+            shutil.copytree(persona_dir, backup_path)
+            file_count = sum(1 for _ in backup_path.rglob("*") if _.is_file())
+            logger.info(
+                "Persona backup created: %s (%d files)",
+                backup_path.name, file_count,
+            )
+            return {
+                "status": "ok",
+                "path": str(backup_path),
+                "dirname": backup_name,
+                "file_count": file_count,
+            }
+        except Exception as e:
+            logger.error("Persona backup failed: %s", e)
+            if backup_path.exists():
+                try:
+                    shutil.rmtree(backup_path)
+                except OSError:
+                    pass
+            return {"status": "error", "reason": str(e)}
+
+    def rotate_personas(self) -> List[str]:
+        """Delete oldest persona backups exceeding retention_count."""
+        dirs = self._persona_backup_dirs()
+        deleted = []
+        while len(dirs) > self.retention_count:
+            oldest = dirs.pop()
+            try:
+                shutil.rmtree(oldest)
+                deleted.append(oldest.name)
+                logger.info("Rotated out persona backup: %s", oldest.name)
+            except OSError as e:
+                logger.warning("Could not delete %s: %s", oldest.name, e)
+        return deleted
+
+    # --- Rotation ---
+
     def rotate(self) -> List[str]:
         """Delete oldest backups exceeding retention_count.
 
@@ -139,10 +219,17 @@ class BackupManager:
                 logger.warning("Could not delete %s: %s", oldest.name, e)
         return deleted
 
-    def check_and_backup(self) -> Dict[str, Any]:
-        """Staleness check + conditional backup + rotation.
+    # --- Main entry point ---
 
-        This is the main entry point, called on boot.
+    def check_and_backup(self) -> Dict[str, Any]:
+        """Staleness check + conditional backup + rotation for ALL user data.
+
+        Backs up both rolodex.db and personas/ together using the same
+        timestamp. This is the main entry point, called on boot.
+
+        Safety invariant: user data is always backed up as a unit.
+        rolodex.db and personas/ snapshots share a timestamp so they
+        can be restored together if needed.
 
         Returns:
             Dict with action taken and details.
@@ -157,10 +244,20 @@ class BackupManager:
                 "latest": latest.name if latest else None,
             }
 
-        result = self.create_backup()
+        # Shared timestamp so DB and persona backups are paired
+        timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S_%f")
+
+        result = self.create_backup(timestamp=timestamp)
+        persona_result = self.create_persona_backup(timestamp=timestamp)
+
         if result["status"] == "ok":
             deleted = self.rotate()
             result["rotated"] = deleted
+        if persona_result["status"] == "ok":
+            deleted = self.rotate_personas()
+            persona_result["rotated"] = deleted
+
+        result["personas"] = persona_result
         return result
 
     def list_backups(self) -> List[Dict[str, Any]]:
