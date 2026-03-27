@@ -161,6 +161,36 @@ def end_top(ctx, summary):
     _do_end(ctx, summary)
 
 
+@cli.command("backup")
+@click.option("--force", is_flag=True, help="Force backup regardless of staleness")
+@click.option("--list", "list_backups", is_flag=True, help="List available backups")
+@click.pass_context
+def backup_top(ctx, force, list_backups):
+    """Manage rolling database backups."""
+    from pathlib import Path
+    from ..storage.backup import BackupManager
+    from ..utils.config import LibrarianConfig
+
+    workspace = Path(ctx.obj.get("workspace", os.getcwd()))
+    config = LibrarianConfig()
+    bm = BackupManager.from_config(workspace, config)
+
+    if list_backups:
+        backups = bm.list_backups()
+        _json_output({"status": "ok", "backups": backups, "count": len(backups)})
+        return
+
+    if force:
+        result = bm.create_backup()
+        if result["status"] == "ok":
+            deleted = bm.rotate()
+            result["rotated"] = deleted
+    else:
+        result = bm.check_and_backup()
+
+    _json_output(result)
+
+
 @cli.command("pulse")
 @click.pass_context
 def pulse_top(ctx):

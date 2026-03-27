@@ -128,6 +128,20 @@ class SolitaireEngine:
         # Save session state
         self._save_session_state(persona_key)
 
+        # Check if backup is needed (non-blocking, non-fatal)
+        backup_result = None
+        try:
+            from .storage.backup import BackupManager
+            from .utils.config import LibrarianConfig
+            _cfg = LibrarianConfig()
+            for k, v in self._config_overrides.items():
+                if hasattr(_cfg, k):
+                    setattr(_cfg, k, v)
+            bm = BackupManager.from_config(self.workspace_dir, _cfg)
+            backup_result = bm.check_and_backup()
+        except Exception:
+            pass
+
         # Get stats
         stats = self._lib.get_stats()
 
@@ -164,6 +178,7 @@ class SolitaireEngine:
                 "activeForm": f"Running as {persona_info.get('identity', {}).get('name', persona_key)}",
             },
             "boot_files": boot_files,
+            "backup": backup_result,
         }
 
         self._booted = True
