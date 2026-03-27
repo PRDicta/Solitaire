@@ -321,7 +321,7 @@ def init_database(db_path: str) -> sqlite3.Connection:
     # Ensure directory exists
     path = Path(db_path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(db_path)
+    conn = sqlite3.connect(db_path, check_same_thread=False)
     conn.row_factory = sqlite3.Row
     # FUSE doesn't support WAL's shared-memory locking — use OFF instead
     if _is_fuse_mount(path):
@@ -539,7 +539,7 @@ def init_shared_database(db_path: str) -> sqlite3.Connection:
     """
     path = Path(db_path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(db_path)
+    conn = sqlite3.connect(db_path, check_same_thread=False)
     conn.row_factory = sqlite3.Row
     if _is_fuse_mount(path):
         conn.execute("PRAGMA journal_mode=OFF")

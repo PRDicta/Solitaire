@@ -108,10 +108,11 @@ class IngestionQueue:
         ]
 
     async def shutdown(self) -> None:
-        """Graceful shutdown: finish current tasks, cancel workers."""
+        """Graceful shutdown: drain pending work, then stop workers."""
+        # Drain pending work before signaling stop (prevents task loss)
+        self._paused.set()  # Unpause so workers can process
+        await self.wait_for_drain(timeout=15.0)
         self._running = False
-        # Resume if paused so workers can exit
-        self._paused.set()
         # Send poison pills
         for _ in self._workers:
             try:
