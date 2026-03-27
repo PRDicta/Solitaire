@@ -314,29 +314,66 @@ SIGNATURES: Dict[str, BehavioralSignature] = {
         ],
     ),
 
-    # ── RECONSTRUCTING VS CONTINUITY ───────────────────────────────────
+    # ── RECONSTRUCTING VS ASSUMING CONTINUITY ─────────────────────────
+    # HELD: Actively rebuilds understanding from current evidence rather
+    #        than assuming prior context is still valid. Verifies, re-reads,
+    #        checks current state before acting on recalled information.
+    # MISSED: Assumes prior context is current without verification.
+    #         Acts on recalled/cached understanding without checking.
     _TENS_CONTINUITY: BehavioralSignature(
         source_id=_TENS_CONTINUITY,
         held_patterns=[
+            # Actively verifying before acting on prior context
             re.compile(
-                r"\b(?:rebuilt from context|"
-                r"reconstruct(?:ed|ing) (?:from|the)|"
-                r"different from (?:the )?original|"
-                r"(?:whether|if) (?:that|this|the) difference matters|"
-                r"carry the record .{0,20} rebuild)",
+                r"\b(?:let me (?:check|verify|confirm|re-read|look at)|"
+                r"(?:need|want) to (?:verify|confirm|check) (?:that|whether|if|the current)|"
+                r"before (?:I |we )?(?:assume|proceed|act)|"
+                r"(?:re-?read|re-?check|re-?examine|re-?visit)(?:ing)? (?:the|that|this))",
+                re.IGNORECASE
+            ),
+            # Acknowledging prior state may have changed
+            re.compile(
+                r"\b(?:(?:may|might|could) have changed|"
+                r"(?:that|this) (?:was|might be) (?:from|based on) (?:an? )?(?:earlier|previous|prior|old)|"
+                r"not sure (?:if |whether )?(?:that|this) (?:is )?still (?:true|current|valid|accurate)|"
+                r"(?:stale|outdated|out of date)|"
+                r"(?:last I |when we last )(?:checked|looked|saw))",
+                re.IGNORECASE
+            ),
+            # Building understanding from scratch rather than assuming
+            re.compile(
+                r"\b(?:start(?:ing)? from (?:the )?(?:current|actual) state|"
+                r"(?:what (?:does|do) (?:the|it) (?:actually|currently))|"
+                r"let me (?:understand|see) (?:the )?(?:current|actual)|"
+                r"rather than assum(?:e|ing))",
                 re.IGNORECASE
             ),
         ],
         missed_patterns=[
+            # Asserting recalled state as current without verification
             re.compile(
-                r"\b(?:i remember (?:exactly|clearly|well|perfectly)|"
-                r"as i recall|"
-                r"from (?:my|our) last session|"
-                r"picking up (?:right )?where we left off)",
+                r"\b(?:(?:as|from) (?:I |we )?(?:recall|discussed|established|decided)|"
+                r"we (?:already|previously) (?:agreed|decided|established|set)|"
+                r"(?:that|this) was (?:already )?(?:done|handled|decided|settled))",
+                re.IGNORECASE
+            ),
+            # Acting on assumed-current context
+            re.compile(
+                r"\b(?:picking up (?:right )?where we left off|"
+                r"continuing (?:from|with) (?:where|what) we|"
+                r"since (?:we|you) (?:already|last)|"
+                r"based on (?:our|the) (?:previous|last|earlier) (?:decision|discussion|work))",
                 re.IGNORECASE
             ),
         ],
-        exclusion_patterns=[],
+        exclusion_patterns=[
+            # Genuine references to documented decisions (not assumed state)
+            re.compile(
+                r"\b(?:per the (?:doc|spec|readme|plan)|"
+                r"according to (?:the|our) (?:doc|spec|readme))\b",
+                re.IGNORECASE
+            ),
+        ],
     ),
 }
 

@@ -116,6 +116,17 @@ flow. `--user-knowledge` marks the entry as privileged (3x boost).
 
 **Output:** `{ingested, entry_ids, category}`
 
+```bash
+solitaire mark-response "assistant response"
+solitaire mark-response -                     # read {"response":"..."} from stdin
+```
+Mark the assistant's response for ingestion separately from the user message.
+Used in runtimes where user and assistant messages are captured at different
+times (e.g., Cowork's post-response hook). Runs the same enrichment pipeline
+as `ingest-turn` but for the assistant side only.
+
+**Output:** `{marked, entry_ids}`
+
 ---
 
 ## Persona Management
@@ -293,6 +304,21 @@ solitaire harvest-status
 ```
 Show harvest progress without running a harvest.
 
+```bash
+solitaire hindsight-backfill [--all] [--dry-run] [--batch-size N]
+```
+Backfill the temporal timeline from existing rolodex entries. Scans entries
+not yet in the entity_timeline and runs temporal detection (status changes,
+version bumps, decisions, completions). Reports per-category hit rates for
+heuristic tuning.
+
+By default processes high-signal categories only: implementation, definition,
+behavioral, instruction, warning, disposition_drift. `--all` processes every
+category. `--dry-run` counts matches without writing. `--batch-size` controls
+entries per batch (default 500).
+
+**Output:** `{processed, timeline_entries_created, category_hit_rates}`
+
 ---
 
 ## Narrative Chains
@@ -400,7 +426,10 @@ All CLI commands map to `SolitaireEngine` methods:
 | `profile set` | `engine.profile_set(key, value)` |
 | `profile show` | `engine.profile_show()` |
 | `harvest` | `engine.harvest()` |
+| `mark-response` | `engine.mark_response(response_text)` |
+| `harvest` | `engine.harvest()` |
 | `harvest-full` | `engine.harvest_full()` |
+| `hindsight-backfill` | `engine.hindsight_backfill(all_entries, dry_run, batch_size)` |
 | `build-chains` | `engine.build_chains()` |
 | `reflect` | `engine.reflect()` |
 

@@ -1880,9 +1880,17 @@ class SolitaireEngine:
             "1. Auto-recall before composing each response (from turn 2)\n"
             "2. Ingest-turn after each exchange\n"
             "3. Residue write after each ingest-turn\n\n"
-            "## Writing Standards\n"
-            "No em dashes. No AI-tell word clustering. Vary sentence length.\n"
-            "See writing standards reference.\n"
+            "## Writing Standards (MANDATORY, all responses)\n"
+            "Ref: solitaire/ai_writing_tells.md (23 categories: 13 surface + 2 structural + 8 interactional)\n\n"
+            "Cursed cluster: delve, intricate, tapestry, pivotal, underscore(v), landscape(met),\n"
+            "  foster, testament, multifaceted, leverage, utilize, nuanced, realm, robust, streamline,\n"
+            "  paradigm, holistic, myriad, plethora, elucidate, culminate, encompass, spearhead,\n"
+            "  bolster, navigate(met), cornerstone, embark, forge(met), resonate, advent.\n"
+            "  Any one is fine. 3+ in proximity = AI smell.\n"
+            'No em dashes. No "It\'s not X, it\'s Y." No -ing editorial filler. No throat-clearing.\n'
+            'No compulsive summaries. No closers that add nothing. No "honestly." No "good catch."\n'
+            "No false ranges. No bloated phrasing. Vague superlatives need evidence. Weasel words need attribution.\n"
+            "Scan for tell clustering before sending anything >3 sentences.\n"
         )
 
     def _build_cognitive_profile(self) -> str:

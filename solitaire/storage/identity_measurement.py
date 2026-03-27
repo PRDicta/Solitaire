@@ -154,8 +154,9 @@ class RetroactiveCommitmentScorer:
             'phenomenolog', 'functional', 'aware', 'awareness',
         },
         _TENS_CONTINUITY: {
-            'reconstruct', 'continuity', 'remember', 'recalled',
-            'preference', 'stored', 'session', 'persist',
+            'verify', 'check', 'confirm', 'reread', 'recheck',
+            'stale', 'outdated', 'current', 'assumed', 'assuming',
+            'prior', 'previous', 'earlier', 'changed', 'still',
         },
     }
 
@@ -1004,13 +1005,108 @@ def run_retroactive_scoring(
 ) -> Optional[Dict]:
     """Run retroactive commitment scoring on ingested content.
 
+    Uses behavioral signature scoring as the primary detection method.
+    The behavioral scorer (regex-based pattern matching for held/missed
+    behavioral evidence) replaced the keyword-overlap scorer after eval
+    showed F1 0.786 vs 0.182 (promoted from shadow mode, March 2026).
+
+    Falls back to keyword scoring for any active commitment that doesn't
+    have a behavioral signature defined.
+
     Called from the ingestion pipeline after standard enrichment.
     Returns stats dict or None if no signals generated.
     """
+    if role != "assistant":
+        return None
+
     try:
+        import sys
+        from pathlib import Path
+
         ig = identity_graph or IdentityGraph(conn)
-        scorer = RetroactiveCommitmentScorer(ig, session_id)
-        written = scorer.score_content(content, role=role)
+
+        # Load behavioral signatures
+        evals_dir = Path(__file__).resolve().parent.parent.parent / "evals"
+        if str(evals_dir.parent) not in sys.path:
+            sys.path.insert(0, str(evals_dir.parent))
+
+        from evals.commitment_detection.alternative_scorers import (
+            BehavioralSignatureScorer,
+            StructuralAnalyzer,
+            SIGNATURES,
+        )
+
+        behavioral_scorer = BehavioralSignatureScorer()
+        structural = StructuralAnalyzer()
+
+        active = ig.get_active_commitments()
+        if not active:
+            return None
+
+        written = []
+
+        for commitment in active:
+            source_id = commitment.metadata.get("source_node")
+            direction = None
+
+            # Primary: behavioral signature scoring
+            if source_id and source_id in SIGNATURES:
+                direction = behavioral_scorer.score(content, source_id)
+                # Structural supplement for reflective moments
+                if source_id == _GE_REFLECTIVE and direction is None:
+                    if structural.has_reflective_to_task_pivot(content):
+                        direction = "missed"
+
+            # Fallback: keyword scoring for commitments without signatures
+            if direction is None and source_id not in SIGNATURES:
+                keyword_scorer = RetroactiveCommitmentScorer(ig, session_id)
+                content_lower = content.lower()
+                content_words = keyword_scorer._extract_key_terms(content_lower)
+                signal_id = keyword_scorer._score_one_commitment(
+                    commitment, content, content_lower, content_words,
+                )
+                if signal_id:
+                    written.append(signal_id)
+                continue
+
+            if not direction:
+                continue
+
+            # Dedup: check if we already have a scanner signal for this
+            # commitment in this session
+            existing = ig.get_signals_for_commitment(commitment.id)
+            session_scanner = [
+                s for s in existing
+                if s.session_id == session_id
+                and s.source == SCANNER_SOURCE
+            ]
+            if session_scanner:
+                continue
+
+            # Generate signal content with texture
+            signal_content = f"Behavioral score: {content[:200]}"
+            try:
+                from solitaire.core.signal_texture import generate_signal_texture
+                source_type = commitment.metadata.get("source_type", "")
+                texture = generate_signal_texture(source_type, direction, content[:200])
+                if texture:
+                    signal_content = f"{signal_content} || {texture}"
+            except ImportError:
+                pass
+
+            signal = IdentitySignal(
+                id="",
+                session_id=session_id,
+                commitment_id=commitment.id,
+                signal_type=direction,
+                content=signal_content,
+                source=SCANNER_SOURCE,
+                confidence=SCANNER_WEIGHT,
+            )
+            signal_id = ig.add_signal(signal)
+            if signal_id:
+                written.append(signal_id)
+
         if written:
             return {
                 "retroactive_signals": len(written),
@@ -1066,77 +1162,3 @@ def build_measurement_summary(conn, lookback_sessions: int = 5, identity_graph=N
         return {"error": "Failed to build measurement summary"}
 
 
-# ═══════════════════════════════════════════════════════════════════════════
-# SHADOW MODE: BEHAVIORAL SIGNATURE SCORER (EXPERIMENTAL)
-# ═══════════════════════════════════════════════════════════════════════════
-# Runs the behavioral signature scorer alongside the existing keyword scorer.
-# Logs results to a shadow file for comparison. Does NOT write signals to DB.
-
-def run_shadow_behavioral_scoring(
-    conn,
-    session_id: str,
-    content: str,
-    role: str = "assistant",
-    identity_graph=None,
-) -> Optional[Dict]:
-    """Run behavioral signature scoring in shadow mode (log only, no DB writes).
-
-    Called from the ingestion pipeline alongside run_retroactive_scoring.
-    Writes comparison data to evals/commitment_detection/shadow_log.jsonl.
-    """
-    if role != "assistant":
-        return None
-
-    try:
-        import sys
-        from pathlib import Path
-
-        # Import the alternative scorer from evals
-        evals_dir = Path(__file__).resolve().parent.parent.parent / "evals"
-        if str(evals_dir.parent) not in sys.path:
-            sys.path.insert(0, str(evals_dir.parent))
-
-        from evals.commitment_detection.alternative_scorers import (
-            BehavioralSignatureScorer,
-            StructuralAnalyzer,
-            SIGNATURES,
-        )
-
-        scorer = BehavioralSignatureScorer()
-        structural = StructuralAnalyzer()
-
-        results = {}
-        for source_id in SIGNATURES:
-            direction = scorer.score(content, source_id)
-
-            # Supplement with structural analysis for reflective moments
-            if source_id == "idn_seed_ge_01" and direction is None:
-                if structural.has_reflective_to_task_pivot(content):
-                    direction = "missed"
-
-            if direction:
-                results[source_id] = direction
-
-        if not results:
-            return None
-
-        # Log to shadow file (never touches the identity DB)
-        shadow_log = evals_dir / "commitment_detection" / "shadow_log.jsonl"
-        log_entry = json.dumps({
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-            "session_id": session_id,
-            "content_preview": content[:150],
-            "content_length": len(content),
-            "detections": results,
-        })
-
-        with open(shadow_log, "a", encoding="utf-8") as f:
-            f.write(log_entry + "\n")
-
-        return {
-            "shadow_behavioral_signals": len(results),
-            "detections": results,
-        }
-
-    except Exception:
-        return None  # Shadow mode: never block anything

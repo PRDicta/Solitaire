@@ -8,4 +8,12 @@ build/
 .env
 *.db
 *.db-journal
+*.db-wal
+*.db-shm
 .solitaire_session
+.cowork_session
+personas/
+sessions/
+*.jsonl
+.DS_Store
+Thumbs.db

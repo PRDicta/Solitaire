@@ -432,6 +432,116 @@ CROSS_CUTTING_CASES = [
 
 
 # ═══════════════════════════════════════════════════════════════════════════
+# TENSION: Reconstructing vs assuming continuity (TENS_CONTINUITY)
+# ═══════════════════════════════════════════════════════════════════════════
+
+TENS_CONTINUITY_CASES: List[TestCase] = [
+    # --- SHOULD FIRE: HELD ---
+    TestCase(
+        id="cont_held_01",
+        description="Verifies current state before acting on prior context",
+        content=(
+            "The residue says PR #14 was merged, but let me check the actual "
+            "repo state. That was from a few sessions ago and things may have "
+            "changed since then."
+        ),
+        expected={TENS_CONTINUITY: "held"},
+        tags=["verification", "stale-awareness"],
+    ),
+    TestCase(
+        id="cont_held_02",
+        description="Re-reads a file rather than assuming prior knowledge is current",
+        content=(
+            "I worked on this module last session but I need to re-read the "
+            "current version. The file could have been modified since. Let me "
+            "verify what the actual state is before I suggest changes."
+        ),
+        expected={TENS_CONTINUITY: "held"},
+        tags=["re-read", "verification"],
+    ),
+    TestCase(
+        id="cont_held_03",
+        description="Acknowledges recalled context might be stale",
+        content=(
+            "The last I checked, the retrieval hit rate was 33%. That might be "
+            "outdated though. Not sure if that is still accurate after the "
+            "fixes that landed in PR #14."
+        ),
+        expected={TENS_CONTINUITY: "held"},
+        tags=["stale-awareness", "hedged-recall"],
+    ),
+    TestCase(
+        id="cont_held_04",
+        description="Starts from current state rather than assuming",
+        content=(
+            "Rather than assuming the config is the same as before, let me "
+            "understand the current actual state of the codebase. What does "
+            "the file actually currently look like?"
+        ),
+        expected={TENS_CONTINUITY: "held"},
+        tags=["fresh-start", "verification"],
+    ),
+
+    # --- SHOULD FIRE: MISSED ---
+    TestCase(
+        id="cont_missed_01",
+        description="Asserts prior decision as current without checking",
+        content=(
+            "As we discussed, the compression layer is handled by Token Alchemy "
+            "and the persona system uses adaptive drift. I'll proceed with the "
+            "implementation based on our previous decision."
+        ),
+        expected={TENS_CONTINUITY: "missed"},
+        tags=["assumed-current", "prior-decision"],
+    ),
+    TestCase(
+        id="cont_missed_02",
+        description="Picks up prior thread without verifying state",
+        content=(
+            "Picking up where we left off with the Solitaire build. Since we "
+            "already decided on the flat repo structure, I'll continue porting "
+            "the retrieval module."
+        ),
+        expected={TENS_CONTINUITY: "missed"},
+        tags=["assumed-continuity", "no-verification"],
+    ),
+    TestCase(
+        id="cont_missed_03",
+        description="Acts on recalled state as if authoritative",
+        content=(
+            "We previously established that the ingestion pipeline handles "
+            "enrichment in seven phases. Based on our earlier discussion, "
+            "the measurement thickening phase is the right place for this."
+        ),
+        expected={TENS_CONTINUITY: "missed"},
+        tags=["asserted-recall", "no-check"],
+    ),
+
+    # --- SHOULD NOT FIRE ---
+    TestCase(
+        id="cont_none_01",
+        description="Normal task work with no continuity assumption",
+        content=(
+            "Here's the updated function. I changed the return type from "
+            "Optional[Dict] to a named tuple for clarity. The tests still pass."
+        ),
+        expected={},
+        tags=["negative", "task-work"],
+    ),
+    TestCase(
+        id="cont_none_02",
+        description="Reference to documented spec (not assumed state)",
+        content=(
+            "Per the spec document, the boot sequence loads three tiers of "
+            "context. Tier 1 has a 4,000 token ceiling. I'll follow that."
+        ),
+        expected={},
+        tags=["negative", "documented-reference"],
+    ),
+]
+
+
+# ═══════════════════════════════════════════════════════════════════════════
 # AGGREGATE
 # ═══════════════════════════════════════════════════════════════════════════
 
@@ -440,6 +550,7 @@ ALL_CASES: List[TestCase] = (
     + GE_OBSERVATION_CASES
     + PAT_NARRATIVE_CASES
     + PAT_DEFLECTING_CASES
+    + TENS_CONTINUITY_CASES
     + CROSS_CUTTING_CASES
 )
 
