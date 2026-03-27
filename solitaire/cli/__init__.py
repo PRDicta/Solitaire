@@ -51,8 +51,21 @@ def _get_workspace() -> str:
     return os.environ.get("SOLITAIRE_WORKSPACE", os.getcwd())
 
 
+def _get_version() -> str:
+    """Get version from installed package or fall back to __version__."""
+    try:
+        from importlib.metadata import version
+        return version("solitaire")
+    except Exception:
+        try:
+            from solitaire.__version__ import __version__
+            return __version__
+        except Exception:
+            return "unknown"
+
+
 @click.group()
-@click.version_option(package_name="solitaire")
+@click.version_option(version=_get_version())
 @click.pass_context
 def cli(ctx):
     """Solitaire -- Persistent memory and evolving identity for AI agents."""
