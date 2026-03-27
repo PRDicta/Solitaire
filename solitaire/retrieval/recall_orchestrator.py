@@ -44,6 +44,8 @@ class RecallResult:
     tier1_confidence: Optional[Dict] = None
     tier2_confidence: Optional[Dict] = None
     graph_expansion_count: int = 0
+    matched_topics: List[Dict] = field(default_factory=list)    # [{label, entry_count, confidence}]
+    matched_projects: List[Dict] = field(default_factory=list)  # [{name, confidence}]
 
 
 class RecallOrchestrator:
@@ -92,8 +94,23 @@ class RecallOrchestrator:
         # Step 1: Trigger analysis
         trigger_result = self.trigger.analyze(message)
 
-        if trigger_result.skip_recall or not trigger_result.queries:
+        if trigger_result.skip_recall:
             return RecallResult(entries=[], scored=[], signals=trigger_result.signals_detected)
+
+        # Fallback: if trigger produced no queries but message wasn't skipped,
+        # generate a raw FTS query from the message itself. This covers small
+        # databases where no topics/projects/entities have been built yet.
+        if not trigger_result.queries:
+            keywords = self._extract_keywords(message)
+            if keywords:
+                trigger_result.queries.append(RecallQuery(
+                    query=" ".join(keywords),
+                    priority=0.5,
+                    signal="fallback_keywords",
+                ))
+                trigger_result.signals_detected.append("fallback_keywords")
+            else:
+                return RecallResult(entries=[], scored=[], signals=trigger_result.signals_detected)
 
         if trigger_result.temporal_only:
             # Temporal queries need special handling (session digests, not FTS)
@@ -197,6 +214,16 @@ class RecallOrchestrator:
 
         entries = [sc.entry for sc in scored[:8]]
 
+        # Build topic/project match dicts for output
+        matched_topics = [
+            {"label": label, "entry_count": count, "confidence": round(conf, 3)}
+            for label, count, conf in trigger_result.matched_topics
+        ]
+        matched_projects = [
+            {"name": name, "confidence": round(conf, 3)}
+            for name, conf in trigger_result.matched_projects
+        ]
+
         return RecallResult(
             entries=entries,
             scored=scored[:8],
@@ -208,6 +235,8 @@ class RecallOrchestrator:
             tier1_confidence=tier1_conf_dict,
             tier2_confidence=tier2_conf_dict,
             graph_expansion_count=graph_expansion_count,
+            matched_topics=matched_topics,
+            matched_projects=matched_projects,
         )
 
     # ── Internal pipeline stages ─────────────────────────────────────────

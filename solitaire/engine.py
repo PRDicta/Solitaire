@@ -600,6 +600,14 @@ class SolitaireEngine:
         except Exception:
             pass
 
+        # Drain ingestion queue before ending the session.
+        # Without this, pending enrichment tasks are lost on exit.
+        try:
+            if self._lib.ingestion_queue:
+                self._run_async(self._lib.ingestion_queue.shutdown())
+        except Exception:
+            pass  # Best-effort drain; don't block session end
+
         # End the session
         self._lib.end_session(summary=summary)
 
