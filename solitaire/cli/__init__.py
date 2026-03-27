@@ -312,3 +312,9 @@ def patterns_top(ctx, window):
     engine = get_engine(ctx)
     result = engine.retrieval_patterns(window=window)
     output_json(result)
+
+
+# ── Entrypoint alias ────────────────────────────────────────────────────
+# pyproject.toml registers "solitaire = solitaire.cli:main" and
+# __main__.py does "from solitaire.cli import main".  Both need this.
+main = cli
