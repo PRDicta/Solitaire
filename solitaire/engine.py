@@ -74,6 +74,15 @@ class SolitaireEngine:
         self._mode = "verbatim"  # "verbatim" (no API key) or "enhanced" (with LLM)
         self._booted = False
 
+    # ─── Guards ─────────────────────────────────────────────────────────────
+
+    def _ensure_booted(self, operation: str) -> None:
+        """Raise if the engine hasn't been booted yet."""
+        if not self._booted or self._lib is None:
+            raise RuntimeError(
+                f"Engine not booted. Call boot() before {operation}()."
+            )
+
     # ─── Async bridge ──────────────────────────────────────────────────────
 
     def _run_async(self, coro):
