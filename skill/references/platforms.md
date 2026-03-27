@@ -70,10 +70,45 @@ loop is: boot once, ingest every turn, end once.
 
 ## Platform-Specific Notes
 
-### Claude Code / Cowork
-The original platform. Integration is via `INSTRUCTIONS.md` (maps to `CLAUDE.md`
-in the Cowork workspace). The model reads the instruction file at session start and
-follows the lifecycle rules autonomously. Bash subprocess calls. Production-tested
+### Claude Code
+Two integration modes, complementary:
+
+**Instructions-driven (minimum viable):** INSTRUCTIONS.md tells the model when to
+call Solitaire commands. The model follows lifecycle rules autonomously. Works but
+depends on the model remembering to ingest every turn.
+
+**Hook-driven (recommended):** A `Stop` hook auto-ingests every exchange via the
+Claude Code transcript. Drop `skill/hooks/claude-code-auto-ingest.py` into your
+`.claude/hooks/` directory and add to `.claude/settings.json`:
+
+```json
+{
+  "hooks": {
+    "Stop": [{
+      "matcher": "",
+      "hooks": [{
+        "type": "command",
+        "command": "python .claude/hooks/claude-code-auto-ingest.py",
+        "timeout": 45
+      }]
+    }]
+  }
+}
+```
+
+The hook reads the session transcript, extracts the last user+assistant exchange,
+and calls `solitaire ingest-turn` automatically. Deduplication prevents double
+ingestion if the model also calls ingest-turn manually. This makes ingestion
+infrastructure rather than instruction compliance.
+
+Set `SOLITAIRE_WORKSPACE` env var to point at your workspace directory, or the
+hook defaults to cwd. Set `SOLITAIRE_CMD` if `solitaire` is not on PATH.
+
+### Cowork
+The original development platform. Integration is via `INSTRUCTIONS.md` (maps to
+`CLAUDE.md` in the Cowork workspace). Cowork's platform harness handles the
+per-turn lifecycle natively: the runtime calls ingest-turn and residue write as
+part of its turn processing. The model does not need to remember. Production-tested
 across 300+ sessions.
 
 ### Hermes

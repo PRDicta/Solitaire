@@ -184,6 +184,16 @@ After ingesting: solitaire residue write "<session texture paragraph>"
 When user signals done: solitaire end "<summary>"
 ```
 
+### Claude Code Auto-Ingestion Hook
+
+For Claude Code users: instead of relying on the model to call `ingest-turn` after
+every response, install the Stop hook from `skill/hooks/claude-code-auto-ingest.py`.
+This reads the session transcript and calls ingest-turn automatically after every
+assistant response. See `skill/references/platforms.md` for setup instructions.
+
+The hook includes deduplication, so it is safe to use alongside the INSTRUCTIONS.md
+per-turn rules. If both fire, the same exchange is ingested only once.
+
 ## Python API
 
 For direct integration without subprocess overhead:
