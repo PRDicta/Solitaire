@@ -67,6 +67,11 @@ class LibrarianConfig:
     context_window_budget: int = 20_000       # Max tokens of history in active window
     context_min_active_turns: int = 4         # Always keep at least N recent turns
     context_bridge_max_tokens: int = 1_000    # Max tokens for the bridge summary
+    # Backup (rolling daily)
+    backup_enabled: bool = True
+    backup_retention_count: int = 3          # Max backups to keep
+    backup_max_age_hours: float = 24.0       # Trigger backup if latest is older
+
     # Debug
     debug_mode: bool = False
     @classmethod
@@ -107,6 +112,10 @@ class LibrarianConfig:
             context_window_budget=int(os.getenv("CONTEXT_WINDOW_BUDGET", str(cls.context_window_budget))),
             context_min_active_turns=int(os.getenv("CONTEXT_MIN_ACTIVE_TURNS", str(cls.context_min_active_turns))),
             context_bridge_max_tokens=int(os.getenv("CONTEXT_BRIDGE_MAX_TOKENS", str(cls.context_bridge_max_tokens))),
+            # Backup
+            backup_enabled=os.getenv("BACKUP_ENABLED", "true").lower() == "true",
+            backup_retention_count=int(os.getenv("BACKUP_RETENTION_COUNT", str(cls.backup_retention_count))),
+            backup_max_age_hours=float(os.getenv("BACKUP_MAX_AGE_HOURS", str(cls.backup_max_age_hours))),
         )
     def validate(self) -> List[str]:
         """Return list of warnings (non-fatal). Empty if fully configured."""
