@@ -185,6 +185,14 @@ class SolitaireEngine:
         except Exception:
             pass
 
+        # Check for updates (non-blocking, non-fatal)
+        update_info = None
+        try:
+            from .core.update_checker import check_for_updates
+            update_info = check_for_updates(self.workspace_dir, __version__)
+        except Exception:
+            pass
+
         # Get stats
         stats = self._lib.get_stats()
 
@@ -222,6 +230,7 @@ class SolitaireEngine:
             },
             "boot_files": boot_files,
             "backup": backup_result,
+            "update": update_info,
         }
 
         self._booted = True
