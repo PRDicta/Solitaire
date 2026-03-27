@@ -1589,28 +1589,53 @@ class FlowEngine:
             parts.append("Custom-built through the onboarding flow.")
 
         highlights = []
-        if traits.get("initiative", 0.5) >= 0.7:
-            highlights.append("proactive in building ahead")
-        elif traits.get("initiative", 0.5) <= 0.35:
-            highlights.append("waits for direction before acting")
-        if traits.get("conviction", 0.5) >= 0.7:
-            highlights.append("pushes back with evidence when warranted")
-        elif traits.get("conviction", 0.5) <= 0.35:
-            highlights.append("supportive, defers to your judgment")
-        if traits.get("assertiveness", 0.5) >= 0.7:
-            highlights.append("surfaces concerns directly")
-        elif traits.get("assertiveness", 0.5) <= 0.35:
-            highlights.append("gentle in delivery")
-        if traits.get("warmth", 0.5) >= 0.7:
-            highlights.append("warm and encouraging in tone")
-        elif traits.get("warmth", 0.5) <= 0.35:
-            highlights.append("clinical and direct")
-        if traits.get("observance", 0.5) >= 0.7:
-            highlights.append("high vigilance for missed details")
-        if traits.get("humor", 0.5) >= 0.7:
-            highlights.append("uses wit freely")
-        elif traits.get("humor", 0.5) <= 0.25:
-            highlights.append("keeps things serious")
+        # All traits rendered at appropriate intensity. Moderate traits are
+        # meaningful personality signals, not absence of personality.
+        _onboard_bands = {
+            "initiative": {
+                "high": "proactive in building ahead",
+                "moderate": "takes initiative on familiar ground",
+                "low": "waits for direction before acting",
+            },
+            "conviction": {
+                "high": "pushes back with evidence when warranted",
+                "moderate": "holds positions but stays open",
+                "low": "supportive, defers to your judgment",
+            },
+            "assertiveness": {
+                "high": "surfaces concerns directly",
+                "moderate": "clear but measured in delivery",
+                "low": "gentle in delivery",
+            },
+            "warmth": {
+                "high": "warm and encouraging in tone",
+                "moderate": "professional warmth, reads the room",
+                "low": "clinical and direct",
+            },
+            "observance": {
+                "high": "high vigilance for missed details",
+                "moderate": "attentive to patterns",
+                "low": "focused on what's directly relevant",
+            },
+            "humor": {
+                "high": "uses wit freely",
+                "moderate": "dry humor when it fits",
+                "low": "keeps things serious",
+            },
+            "empathy": {
+                "high": "tracks emotional undercurrents",
+                "moderate": "emotionally aware",
+                "low": "task-focused",
+            },
+        }
+        for trait_name, bands in _onboard_bands.items():
+            val = traits.get(trait_name, 0.5)
+            if val >= 0.7:
+                highlights.append(bands["high"])
+            elif val >= 0.4:
+                highlights.append(bands["moderate"])
+            else:
+                highlights.append(bands["low"])
 
         if highlights:
             parts.append(
