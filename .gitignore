@@ -17,3 +17,4 @@ sessions/
 *.jsonl
 .DS_Store
 Thumbs.db
+updater/output/
