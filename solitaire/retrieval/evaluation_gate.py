@@ -30,12 +30,15 @@ Turn 1-2: empty basket = hard block (must confirm with user).
 Turn 3+: empty basket = soft "stop, think" flag, with escalation to
 hard block for destructive actions or major pivots.
 """
+import os
 import re
 import sqlite3
 import json
+import tempfile
 from typing import List, Optional, Dict, Tuple, Callable
 from dataclasses import dataclass, field
 from datetime import datetime
+from pathlib import Path
 
 
 # ─── Data Types ──────────────────────────────────────────────────────────────
@@ -610,6 +613,226 @@ def _check_initiative_opportunity(message: str, intent: str) -> Optional[str]:
     )
 
 
+# ─── Claim Scanner: Unverified State Assertions ─────────────────────────────
+#
+# Detects when the conversation involves remote/unobserved systems and flags
+# unverified state assertions before the model can act on them.
+#
+# Design principle: "Stop. Think. Check. Be Sure." as a mechanical gate,
+# not a behavioral aspiration. The ops block says check; this enforces it.
+
+# Category 1: Remote/unobserved machine references
+_REMOTE_SYSTEM_PATTERNS = [
+    re.compile(
+        r"\b(?:her|his|their|Bernie'?s?|Brenna'?s?)\s+"
+        r"(?:machine|computer|laptop|desktop|server|PC|Mac|system|setup|"
+        r"installation|install|folder|directory|drive)",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"\b(?:remote|ssh|rdp|vnc|teamviewer)\b",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"\b(?:on|at)\s+(?:her|his|their|the\s+other)\s+(?:end|side|system|machine)",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"\b(?:another|different|separate|other)\s+"
+        r"(?:machine|computer|server|system|environment|instance|workspace)",
+        re.IGNORECASE,
+    ),
+]
+
+# Category 2: State assertions about systems (needs remote indicator to fire)
+_STATE_ASSERTION_PATTERNS = [
+    re.compile(
+        r"\b(?:isn't|is\s+not|aren't|are\s+not|wasn't|weren't)\s+"
+        r"(?:running|installed|working|responding|active|started|configured|connected)",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"\b(?:is|are)\s+(?:broken|down|offline|corrupt|missing|outdated|"
+        r"misconfigured|incompatible|borked|messed\s+up)",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"\b(?:never|didn't|did\s+not|hasn't|has\s+not)\s+"
+        r"(?:applied|installed|updated|completed|taken\s+effect|propagated|"
+        r"ran|started|finished|worked)",
+        re.IGNORECASE,
+    ),
+]
+
+# Category 3: File operations targeting unverified/remote systems
+_UNVERIFIED_FILE_OP_PATTERNS = [
+    re.compile(
+        r"\b(?:delete|remove|move|rename|overwrite|replace|copy|nuke|wipe)\b"
+        r".{0,40}"
+        r"\b(?:on|from|at|to)\s+(?:her|his|their|that|the\s+other|the\s+remote|"
+        r"Bernie'?s?|Brenna'?s?|\w+'s\s+(?:machine|computer|laptop|desktop|server|system))",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"\b(?:run|execute)\b"
+        r".{0,40}"
+        r"\b(?:on|against)\s+(?:her|his|their|that|the\s+remote|"
+        r"Bernie'?s?|Brenna'?s?|\w+'s\s+(?:machine|computer|laptop|desktop|server|system))",
+        re.IGNORECASE,
+    ),
+]
+
+# Category 4: Reasoning from partial/indirect evidence
+_PARTIAL_EVIDENCE_PATTERNS = [
+    re.compile(
+        r"\b(?:from|based\s+on)\s+(?:the|this|that)\s+"
+        r"(?:screenshot|image|photo|screen\s*grab|screen\s*shot)",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"\b(?:it\s+(?:looks|appears|seems)\s+like)\b",
+        re.IGNORECASE,
+    ),
+]
+
+# Verification signals: evidence that proper checking occurred (suppresses flags)
+_VERIFICATION_SIGNALS = [
+    re.compile(r"\bI\s+(?:checked|verified|confirmed|ran|tested|looked|examined)\b", re.IGNORECASE),
+    re.compile(r"\b(?:output|log|result)\s+(?:shows|says|reads|confirms)\b", re.IGNORECASE),
+    re.compile(r"\baccording\s+to\s+(?:the\s+)?(?:output|log|result|error)", re.IGNORECASE),
+    re.compile(r"\bI\s+(?:ssh|connected|logged\s+in|remoted)\b", re.IGNORECASE),
+    re.compile(r"\b(?:I\s+can't\s+verify|without\s+(?:checking|verifying))\b", re.IGNORECASE),
+]
+
+# Marker directory for inter-turn communication with the Stop hook
+_CLAIM_MARKER_DIR = os.path.join(tempfile.gettempdir(), "solitaire_claim_markers")
+
+
+def _has_remote_context(message: str) -> bool:
+    """Check if the message references a remote or unobserved system."""
+    return any(p.search(message) for p in _REMOTE_SYSTEM_PATTERNS)
+
+
+def _has_verification(message: str) -> bool:
+    """Check if the message contains verification signals."""
+    return any(p.search(message) for p in _VERIFICATION_SIGNALS)
+
+
+def _read_claim_marker(workspace_dir: Optional[str]) -> Optional[dict]:
+    """Read and consume a claim marker from the Stop hook, if present."""
+    if not workspace_dir:
+        return None
+    try:
+        marker_dir = Path(_CLAIM_MARKER_DIR)
+        if not marker_dir.exists():
+            return None
+        # Marker is keyed by workspace hash to scope to the session
+        import hashlib
+        ws_hash = hashlib.md5(workspace_dir.encode()).hexdigest()[:12]
+        marker_path = marker_dir / ws_hash
+        if not marker_path.exists():
+            return None
+        data = json.loads(marker_path.read_text(encoding="utf-8"))
+        # Consume the marker (one-shot)
+        marker_path.unlink()
+        return data
+    except Exception:
+        return None
+
+
+def _check_unverified_claims(
+    message: str,
+    workspace_dir: Optional[str] = None,
+) -> List[EvaluationFlag]:
+    """Detect unverified state assertions about remote/unobserved systems.
+
+    Scans the user's message for patterns indicating:
+    1. References to remote/unobserved systems
+    2. State assertions that aren't grounded in verification
+    3. File operations targeting unverified systems
+    4. Reasoning from screenshots or partial evidence
+
+    Also reads claim markers left by the Stop hook from the previous turn.
+
+    Returns a list of EvaluationFlag objects (may be empty).
+    """
+    flags: List[EvaluationFlag] = []
+    has_remote = _has_remote_context(message)
+    has_verify = _has_verification(message)
+
+    # Check for file ops on unverified targets (highest severity)
+    if has_remote and not has_verify:
+        for p in _UNVERIFIED_FILE_OP_PATTERNS:
+            if p.search(message):
+                flags.append(EvaluationFlag(
+                    category="unverified_file_op",
+                    severity="block",
+                    detail=(
+                        "File operation targets a system whose current state has not been "
+                        "verified. MUST observe actual state before executing. "
+                        "Stop. Think. Check. Be Sure."
+                    ),
+                ))
+                break  # One flag is enough for this category
+
+    # Check for state assertions about remote systems
+    if has_remote and not has_verify and not flags:
+        # Only if we didn't already flag a file op (which is more specific)
+        for p in _STATE_ASSERTION_PATTERNS:
+            if p.search(message):
+                flags.append(EvaluationFlag(
+                    category="unverified_state_claim",
+                    severity="warning",
+                    detail=(
+                        "State assertion about an unobserved system detected. "
+                        "What specific evidence supports this claim? "
+                        "Is that evidence current? Stop. Think. Check. Be Sure."
+                    ),
+                ))
+                break
+
+    # Check for partial evidence reasoning
+    for p in _PARTIAL_EVIDENCE_PATTERNS:
+        if p.search(message):
+            flags.append(EvaluationFlag(
+                category="partial_evidence",
+                severity="info",
+                detail=(
+                    "Reasoning from screenshot or visual evidence. "
+                    "Screenshots are snapshots, not live state. "
+                    "Verify current state before recommending actions."
+                ),
+            ))
+            break
+
+    # Check for remote context without state claims (softest flag)
+    if has_remote and not has_verify and not flags:
+        flags.append(EvaluationFlag(
+            category="unverified_remote",
+            severity="info",
+            detail=(
+                "Conversation involves a remote or unobserved system. "
+                "Verify target state before recommending file operations or "
+                "asserting what is or isn't present."
+            ),
+        ))
+
+    # Read marker from Stop hook (previous turn's unverified claims)
+    marker = _read_claim_marker(workspace_dir)
+    if marker and marker.get("claims_detected"):
+        summary = marker.get("summary", "Unverified claims in previous response.")
+        flags.append(EvaluationFlag(
+            category="prior_unverified_claims",
+            severity="warning",
+            detail=(
+                f"Previous response contained unverified state assertions: {summary} "
+                "Verify these claims before building on them."
+            ),
+        ))
+
+    return flags
+
+
 # ─── Context Block Builder ──────────────────────────────────────────────────
 
 def build_evaluation_block(result: EvaluationResult) -> str:
@@ -617,7 +840,15 @@ def build_evaluation_block(result: EvaluationResult) -> str:
 
     Returns empty string when no concerns are found (zero token cost).
     """
-    if result.proceed and not result.initiative_prompt and not result.needs_confirmation:
+    has_claim_flags = any(
+        f.category in (
+            "unverified_file_op", "unverified_state_claim",
+            "unverified_remote", "partial_evidence", "prior_unverified_claims",
+        )
+        for f in result.flags
+    )
+    if (result.proceed and not result.initiative_prompt
+            and not result.needs_confirmation and not has_claim_flags):
         return ""
 
     parts = []
@@ -655,6 +886,15 @@ def build_evaluation_block(result: EvaluationResult) -> str:
         for anchor in result.anchors_found[:3]:  # Cap at 3 to keep block lean
             parts.append(f"  \u2192 {anchor}")
 
+    if has_claim_flags:
+        parts.append("")
+        parts.append("\u26a0 CLAIM CHECK: Stop. Think. Check. Be Sure.")
+        parts.append("  Before asserting state about systems you cannot directly observe:")
+        parts.append("  1. What specific evidence supports this claim?")
+        parts.append("  2. When was this evidence collected? Is it current?")
+        parts.append("  3. Could the state have changed since?")
+        parts.append("  If you cannot answer all three, state what you don't know instead.")
+
     if result.initiative_prompt:
         parts.append("")
         parts.append(f"Initiative: {result.initiative_prompt}")
@@ -678,6 +918,7 @@ def evaluate_message(
     context_text: Optional[str] = None,
     turn_number: int = 0,
     recall_fn: Optional[Callable[[str], List[str]]] = None,
+    workspace_dir: Optional[str] = None,
 ) -> EvaluationResult:
     """Run the full evaluation gate on a user message.
 
@@ -694,6 +935,8 @@ def evaluate_message(
         recall_fn: Optional callable that takes a query string and returns
             a list of matching snippets from the knowledge store. Used for
             escalation when no anchors are found in loaded context.
+        workspace_dir: Optional workspace directory path. Used by the claim
+            scanner to read marker files left by the Stop hook.
 
     Returns:
         EvaluationResult with intent, flags, and context block.
@@ -823,7 +1066,11 @@ def evaluate_message(
                 )
             ))
 
-    # 6. Determine proceed/stop
+    # 6. Claim scanner — detect unverified state assertions about remote systems
+    claim_flags = _check_unverified_claims(message, workspace_dir=workspace_dir)
+    result.flags.extend(claim_flags)
+
+    # 7. Determine proceed/stop
     # Block if any warning+ flags exist on action requests
     if result.intent == "action_request" and result.flags:
         has_warning_or_higher = any(
@@ -874,7 +1121,25 @@ def evaluate_message(
         if not result.evaluation:
             result.evaluation = "Reference mismatch detected. Verify the label matches the definition."
 
-    # 7. Build context block
+    # Block on unverified file operations (any intent)
+    if any(f.category == "unverified_file_op" for f in result.flags):
+        result.proceed = False
+        if not result.evaluation:
+            result.evaluation = (
+                "File operation on unverified system detected. "
+                "MUST verify current state before executing."
+            )
+
+    # Block on prior unverified claims from Stop hook
+    if any(f.category == "prior_unverified_claims" for f in result.flags):
+        result.proceed = False
+        if not result.evaluation:
+            result.evaluation = (
+                "Previous response contained unverified state assertions. "
+                "Verify before building on those claims."
+            )
+
+    # 8. Build context block
     result.context_block = build_evaluation_block(result)
 
     return result

@@ -104,6 +104,42 @@ infrastructure rather than instruction compliance.
 Set `SOLITAIRE_WORKSPACE` env var to point at your workspace directory, or the
 hook defaults to cwd. Set `SOLITAIRE_CMD` if `solitaire` is not on PATH.
 
+**Claim scanner (recommended):** A second `Stop` hook scans assistant responses for
+unverified state assertions about remote or unobserved systems. Drop
+`skill/hooks/claude-code-claim-scanner.py` into `.claude/hooks/` and add it
+alongside the auto-ingest hook:
+
+```json
+{
+  "hooks": {
+    "Stop": [{
+      "matcher": "",
+      "hooks": [
+        {
+          "type": "command",
+          "command": "python .claude/hooks/claude-code-auto-ingest.py",
+          "timeout": 45
+        },
+        {
+          "type": "command",
+          "command": "python .claude/hooks/claude-code-claim-scanner.py",
+          "timeout": 30
+        }
+      ]
+    }]
+  }
+}
+```
+
+The claim scanner detects when the model makes definitive claims about systems it
+cannot directly observe (remote machines, unverified installations, state inferred
+from screenshots). When claims are detected, it writes a marker file that the
+preflight evaluation gate picks up on the next turn, injecting a "Stop. Think.
+Check. Be Sure." block before the model composes its response. This makes
+verification structural rather than behavioral.
+
+Disable with `SOLITAIRE_CLAIM_SCANNER=0` environment variable.
+
 ### Cowork
 The original development platform. Integration is via `INSTRUCTIONS.md` (maps to
 `CLAUDE.md` in the Cowork workspace). Cowork's platform harness handles the
