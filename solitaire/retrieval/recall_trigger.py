@@ -140,33 +140,56 @@ class _TopicCache:
 # ─── Project Cluster Cache ───────────────────────────────────────────────────
 
 class _ProjectCache:
-    """Cache of project clusters for name matching."""
+    """Cache of project clusters for label/topic matching."""
 
     def __init__(self):
-        self._projects: Dict[str, Dict] = {}  # name → {id, keywords, entry_count}
+        self._projects: Dict[str, Dict] = {}  # label → {id, topic_labels, entry_count}
         self._loaded = False
 
     def load(self, conn: sqlite3.Connection):
         if self._loaded:
             return
         try:
+            import json as _json
             rows = conn.execute(
-                "SELECT id, name, keywords, entry_count FROM project_clusters WHERE entry_count >= 1"
+                "SELECT id, label, topic_ids, entry_count "
+                "FROM project_clusters WHERE entry_count >= 1"
             ).fetchall()
+
+            # Build topic ID → label lookup for resolving topic_ids
+            topic_labels = {}
+            try:
+                topic_rows = conn.execute(
+                    "SELECT id, label FROM topics"
+                ).fetchall()
+                for tr in topic_rows:
+                    tid = tr["id"] if isinstance(tr, sqlite3.Row) else tr[0]
+                    tlabel = tr["label"] if isinstance(tr, sqlite3.Row) else tr[1]
+                    topic_labels[tid] = tlabel
+            except Exception:
+                pass
+
             for row in rows:
-                name = row["name"] if isinstance(row, sqlite3.Row) else row[1]
-                keywords_raw = row["keywords"] if isinstance(row, sqlite3.Row) else row[2]
+                label = row["label"] if isinstance(row, sqlite3.Row) else row[1]
+                topic_ids_raw = row["topic_ids"] if isinstance(row, sqlite3.Row) else row[2]
                 count = row["entry_count"] if isinstance(row, sqlite3.Row) else row[3]
-                keywords = []
-                if keywords_raw:
+
+                # Resolve topic IDs to labels for keyword matching
+                resolved = []
+                if topic_ids_raw:
                     try:
-                        import json
-                        keywords = json.loads(keywords_raw) if isinstance(keywords_raw, str) else keywords_raw
+                        tids = _json.loads(topic_ids_raw) if isinstance(topic_ids_raw, str) else topic_ids_raw
+                        resolved = [
+                            topic_labels[tid].lower().strip()
+                            for tid in tids
+                            if tid in topic_labels
+                        ]
                     except Exception:
-                        keywords = keywords_raw.split(',') if isinstance(keywords_raw, str) else []
-                self._projects[name.lower()] = {
-                    "name": name,
-                    "keywords": [k.lower().strip() for k in keywords if k],
+                        pass
+
+                self._projects[label.lower()] = {
+                    "label": label,
+                    "topic_labels": resolved,
                     "entry_count": count,
                 }
         except Exception:
@@ -174,20 +197,20 @@ class _ProjectCache:
         self._loaded = True
 
     def match(self, text: str) -> List[Tuple[str, float]]:
-        """Match text against project names/keywords. Returns (project_name, confidence)."""
+        """Match text against project labels/topics. Returns (project_label, confidence)."""
         if not self._loaded:
             return []
         text_lower = text.lower()
         matches = []
         for key, info in self._projects.items():
-            # Check project name
+            # Check project label
             if key in text_lower:
-                matches.append((info["name"], 0.9))
+                matches.append((info["label"], 0.9))
                 continue
-            # Check keywords
-            for kw in info["keywords"]:
-                if kw and kw in text_lower:
-                    matches.append((info["name"], 0.7))
+            # Check resolved topic labels
+            for tl in info["topic_labels"]:
+                if tl and tl in text_lower:
+                    matches.append((info["label"], 0.7))
                     break
         return matches[:3]
 

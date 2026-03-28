@@ -157,9 +157,20 @@ class SolitaireEngine:
 
         # If resuming, try to restore the prior session's state
         if old_session_id:
+            orphan_id = self._lib.session_id  # Auto-generated during init
             session_info = self._lib.resume_session(old_session_id)
             if session_info:
                 self._session_id = old_session_id
+                # Clean up the orphan session row created during init
+                if orphan_id != old_session_id:
+                    try:
+                        self._lib.rolodex.conn.execute(
+                            "DELETE FROM conversations WHERE id = ?",
+                            (orphan_id,),
+                        )
+                        self._lib.rolodex.conn.commit()
+                    except Exception:
+                        pass
             else:
                 # Prior session not found in DB; fall back to fresh session
                 self._session_id = self._lib.session_id

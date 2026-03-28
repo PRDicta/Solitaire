@@ -48,17 +48,24 @@ Solitaire gives agents persistent memory, persistent identity, and persistent be
 
 ## Getting started
 
-### Cowork (recommended, zero-config)
+### Claude Code (recommended)
 
-The fastest way to use Solitaire. No terminal, no code.
+The fastest way to use Solitaire. Works on Mac, Windows, and Linux.
 
-1. [Download the latest release](https://github.com/PRDicta/Solitaire-for-Agents/releases/latest) (.zip file)
-2. Unzip the folder anywhere on your computer
-3. Open Cowork and select the unzipped folder as your workspace
+1. Install [Claude Code](https://claude.ai/code) if you haven't already
+2. Clone and install Solitaire:
 
-Solitaire boots automatically on your first message, walks you through creating a partner, and starts learning from every conversation.
+```bash
+git clone https://github.com/PRDicta/Solitaire-for-Agents.git
+cd Solitaire-for-Agents
+pip install -e .
+```
 
-### From source (developers)
+3. Open Claude Code and select the `Solitaire-for-Agents` folder as your workspace
+
+Solitaire boots automatically on your first message, walks you through creating a partner, and starts learning from every conversation. Auto-ingestion runs via a Stop hook, so memory capture is mechanical rather than instruction-dependent.
+
+### From source (any agent platform)
 
 Requirements: Python 3.10+, git.
 
@@ -126,7 +133,8 @@ Solitaire is for developers who want agents to feel continuous across time.
 
 | Platform | Integration | Status |
 |----------|------------|--------|
-| Claude Code / Cowork | CLAUDE.md + bash subprocess | Production (400+ sessions) |
+| **Claude Code** | CLAUDE.md + bash subprocess + hooks | **Recommended** (400+ sessions) |
+| Cowork | CLAUDE.md + bash subprocess | Compatible |
 | Hermes | SKILL.md (native format) | Compatible |
 | OpenClaw | SKILL.md (native format) | Compatible |
 | Gemini CLI | SKILL.md compatible | Compatible |
