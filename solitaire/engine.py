@@ -355,6 +355,19 @@ class SolitaireEngine:
         except Exception:
             pass  # Non-fatal
 
+        # Write session tail (rolling window of last N turns)
+        try:
+            from .core.session_residue import write_session_tail
+            persona_dir_str = str(self.persona_dir / self._persona_key) if self._persona_key else None
+            write_session_tail(
+                conn=self._lib.rolodex.conn,
+                session_id=self._session_id,
+                persona_key=self._persona_key or "",
+                persona_dir=persona_dir_str,
+            )
+        except Exception:
+            pass  # Non-fatal
+
         return result
 
     # ─── Recall ───────────────────────────────────────────────────────────
@@ -1825,6 +1838,24 @@ class SolitaireEngine:
                 )
                 if residue_block:
                     blocks["residue"] = residue_block
+            except Exception:
+                pass
+
+        # Session tail (red-hot context from prior session)
+        if not cold:
+            try:
+                from .core.session_residue import load_session_tail, build_tail_block
+                persona_dir_str = str(self.persona_dir / persona_key) if persona_key else None
+                _tail_data = load_session_tail(
+                    conn=self._lib.rolodex.conn,
+                    current_session_id=self._session_id,
+                    persona_key=persona_key,
+                    persona_dir=persona_dir_str,
+                )
+                if _tail_data.get("turns"):
+                    tail_block = build_tail_block(_tail_data)
+                    if tail_block:
+                        blocks["tail"] = tail_block
             except Exception:
                 pass
 
