@@ -55,6 +55,8 @@ class LibrarianAgent:
         # Phase 3: preloading
         self.pressure_monitor = PressureMonitor()
         self._preloader: Optional[Preloader] = None
+        # Phase 8: topic router (set by Librarian after construction)
+        self._topic_router = None
         self._last_preload_result: Optional[PreloadResult] = None
     # ─── Indexing ─────────────────────────────────────────────────────────
     async def index_new_messages(
@@ -149,6 +151,17 @@ class LibrarianAgent:
                 extra_entries = entries[1:]
                 self.rolodex.batch_create_entries(extra_entries)
                 self._total_entries_created += len(extra_entries)
+
+            # Topic inference: assign topic to enriched entries
+            if self._topic_router:
+                try:
+                    enriched = self.rolodex.get_entry(stub_id)
+                    if enriched:
+                        await self._topic_router.infer_topic(enriched)
+                    for extra in (entries[1:] if len(entries) > 1 else []):
+                        await self._topic_router.infer_topic(extra)
+                except Exception:
+                    pass  # Topic assignment is supplementary
 
         elif task.stub_entry_ids:
             # Extraction produced nothing — mark stub as enriched anyway

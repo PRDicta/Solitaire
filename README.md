@@ -126,7 +126,7 @@ Solitaire is for developers who want agents to feel continuous across time.
 
 - **Coding agents** that remember project history and user preferences
 - **Personal assistants** that maintain working context across sessions
-- **AI products** that need durable personalization instead of shallow recall
+- **AI products** that need persistent personalization instead of shallow recall
 - **Enterprise teams** who want local-first memory and identity infrastructure under their control
 
 ## Platform compatibility
@@ -225,8 +225,15 @@ After your first session, the workspace contains:
 | `personas/` | Persona configurations (traits, north star, domain scope) |
 | `sessions/` | Session state and metadata |
 | `*.jsonl` | Verbatim turn pair archives |
+| `backups/` | Timestamped SQLite + persona snapshots with configurable retention |
 
 All of these are gitignored by default. Your memory data never enters version control.
+
+## Storage architecture
+
+SQLite is the primary store: the knowledge graph, FTS index, embeddings, and session state all live in `rolodex.db`. JSONL files serve as a best-effort append-only audit trail for traceability; if a JSONL append fails, the session continues normally via SQLite. Automatic backups snapshot both `rolodex.db` and `personas/` together so they can be restored as a unit.
+
+On FUSE-mounted filesystems (common in container environments), SQLite uses a simpler journaling mode for compatibility. This trades some crash-recovery guarantees for reliable operation across mount boundaries. The backup system compensates by providing point-in-time snapshots.
 
 ## Privacy
 
