@@ -282,7 +282,7 @@ def adjust_weights(
         is_uk = row["category"] == "user_knowledge"
         age_days = (now - datetime.fromisoformat(
             row["created_at"].replace('Z', '+00:00')
-        ).replace(tzinfo=None)).total_seconds() / 86400.0
+        )).total_seconds() / 86400.0
 
         new_weight = apply_confidence_decay(weight, age_days, is_user_knowledge=is_uk)
         if new_weight.confidence < weight.confidence:

@@ -189,7 +189,7 @@ def detect_dead_zones(
             try:
                 lr_dt = datetime.fromisoformat(
                     last_recalled.replace('Z', '+00:00')
-                ).replace(tzinfo=None)
+                )
                 days_stale = (now - lr_dt).total_seconds() / 86400.0
             except (ValueError, AttributeError):
                 days_stale = stale_days + 1  # Assume stale if parsing fails

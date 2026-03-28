@@ -513,7 +513,7 @@ def get_unused_tools(
             try:
                 lu_dt = datetime.fromisoformat(
                     r["last_used"].replace('Z', '+00:00')
-                ).replace(tzinfo=None)
+                )
                 days_unused = (now - lu_dt).total_seconds() / 86400.0
             except (ValueError, AttributeError):
                 days_unused = review_days + 1
@@ -522,7 +522,7 @@ def get_unused_tools(
             try:
                 inst_dt = datetime.fromisoformat(
                     r["installed_at"].replace('Z', '+00:00')
-                ).replace(tzinfo=None)
+                )
                 days_unused = (now - inst_dt).total_seconds() / 86400.0
             except (ValueError, AttributeError):
                 days_unused = review_days + 1

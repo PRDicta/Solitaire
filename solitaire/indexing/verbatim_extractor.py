@@ -102,6 +102,15 @@ class VerbatimExtractor:
             if tag not in tags and len(tag) >= 3:
                 tags.append(tag)
 
+        # Deduplicate tags while preserving order
+        _seen = set()
+        _deduped = []
+        for _t in tags:
+            if _t not in _seen:
+                _seen.add(_t)
+                _deduped.append(_t)
+        tags = _deduped
+
         return [{
             "content": chunk.strip(),
             "category": category,

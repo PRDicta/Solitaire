@@ -158,24 +158,6 @@ def _infer_entity_type(name: str, context: str = "") -> str:
 
 import re
 
-# Relationship patterns: (regex, relationship_type, direction)
-# direction: "forward" means subject→object, "reverse" means object→subject
-_RELATIONSHIP_PATTERNS = [
-    # Creation/authorship
-    (r'(\b\w+\b)\s+(?:created|built|wrote|developed|implemented|designed|shipped)\s+(.+?)(?:\.|,|$)', 'created', 'forward'),
-    (r'(\b\w+\b)\s+(?:is|was)\s+(?:created|built|developed)\s+by\s+(.+?)(?:\.|,|$)', 'created_by', 'reverse'),
-
-    # Dependencies
-    (r'(\b\w+\b)\s+(?:uses|requires|depends\s+on|relies\s+on|needs)\s+(.+?)(?:\.|,|$)', 'depends_on', 'forward'),
-    (r'(\b\w+\b)\s+(?:is\s+part\s+of|belongs\s+to|lives\s+in)\s+(.+?)(?:\.|,|$)', 'part_of', 'forward'),
-
-    # Decisions/preferences
-    (r'(\b\w+\b)\s+(?:decided|chose|picked|selected|prefers)\s+(.+?)(?:\.|,|$)', 'decided_on', 'forward'),
-
-    # Ownership
-    (r"(\b\w+\b)'s\s+(\b\w+(?:\s+\w+)?)\b", 'owns', 'forward'),
-]
-
 
 def extract_relationships(
     content: str,

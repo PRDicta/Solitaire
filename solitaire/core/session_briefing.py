@@ -11,7 +11,7 @@ no LLM calls.
 import json
 import sqlite3
 import re
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Tuple
 from dataclasses import dataclass, field
 
@@ -574,8 +574,8 @@ def _relative_time(timestamp: str) -> str:
         t = datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
         now = datetime.now(timezone.utc)
         # Handle timezone-aware vs naive
-        if t.tzinfo:
-            t = t.replace(tzinfo=None)
+        if t.tzinfo is None:
+            t = t.replace(tzinfo=timezone.utc)
         delta = now - t
         if delta.days == 0:
             hours = delta.seconds // 3600
