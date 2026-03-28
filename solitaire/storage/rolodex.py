@@ -13,12 +13,15 @@ from collections import OrderedDict
 
 
 def _safe_fromisoformat(s):
-    """Parse ISO datetime string, handling 'Z' suffix (Python <3.11 compat).
-    Returns naive datetime to match codebase convention (utcnow everywhere)."""
+    """Parse ISO datetime, handling 'Z' suffix (Python <3.11 compat).
+    Always returns timezone-aware datetime (UTC) for safe arithmetic
+    with datetime.now(timezone.utc)."""
     if s is None:
         return None
     dt = datetime.fromisoformat(s.replace('Z', '+00:00'))
-    return dt.replace(tzinfo=None) if dt.tzinfo else dt
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt
 from ..core.types import (
     RolodexEntry, ContentModality, EntryCategory, Tier,
     TierEvent, estimate_tokens, compute_importance_score,
@@ -516,6 +519,7 @@ class Rolodex:
             JOIN rolodex_entries re ON re.id = fts.entry_id
             WHERE rolodex_fts MATCH ?
             AND re.archived_at IS NULL
+            AND re.superseded_by IS NULL
         """
         params: list = [fts_query]
         if conversation_id:
@@ -554,7 +558,7 @@ class Rolodex:
         Phase 12: Optional source_type filter ('conversation', 'document', 'user_knowledge').
         """
         # Fetch all entries with embeddings (excluding archived)
-        sql = "SELECT * FROM rolodex_entries WHERE embedding IS NOT NULL AND archived_at IS NULL"
+        sql = "SELECT * FROM rolodex_entries WHERE embedding IS NOT NULL AND archived_at IS NULL AND superseded_by IS NULL"
         params: list = []
         if conversation_id:
             sql += " AND conversation_id = ?"

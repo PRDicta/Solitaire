@@ -26,7 +26,7 @@ authentic to the actual session experience rather than delegating to a summarize
 
 import sqlite3
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional, List, Dict, Any
 from dataclasses import dataclass, field
 
@@ -154,7 +154,7 @@ def _deserialize_encoding(row: sqlite3.Row) -> ExperientialEncoding:
         themes=json.loads(row["themes"]) if row["themes"] else [],
         arc=row["arc"] or "",
         metadata=json.loads(row["metadata"]) if row["metadata"] else {},
-        created_at=datetime.fromisoformat(row["created_at"].replace('Z', '+00:00')).replace(tzinfo=None) if row["created_at"] else datetime.now(),
+        created_at=datetime.fromisoformat(row["created_at"].replace('Z', '+00:00')) if row["created_at"] else datetime.now(timezone.utc),
     )
 
 

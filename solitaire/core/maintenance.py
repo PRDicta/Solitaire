@@ -151,7 +151,7 @@ def check_cooldown(
         return True, None
 
     _raw = row["completed_at"].replace('Z', '+00:00') if row["completed_at"] else None
-    last_completed = datetime.fromisoformat(_raw).replace(tzinfo=None) if _raw else datetime.min
+    last_completed = datetime.fromisoformat(_raw) if _raw else datetime.min.replace(tzinfo=timezone.utc)
     cutoff = datetime.now(timezone.utc) - timedelta(hours=cooldown_hours)
 
     return last_completed < cutoff, row["completed_at"]
@@ -353,8 +353,9 @@ class MaintenanceEngine:
                 for ctx_a, val_a in pcts_a:
                     for ctx_b, val_b in pcts_b:
                         # Shared context words (at least 1 word overlap)
-                        words_a = set(ctx_a.split())
-                        words_b = set(ctx_b.split())
+                        _stop_words = {"is", "at", "the", "a", "an", "to", "of", "in", "for", "on", "it", "was", "are", "be", "has", "had", "have", "with", "from", "about", "been", "this", "that", "not"}
+                        words_a = set(ctx_a.split()) - _stop_words
+                        words_b = set(ctx_b.split()) - _stop_words
                         overlap = words_a & words_b
 
                         if overlap and abs(val_a - val_b) > 5:
@@ -1323,7 +1324,7 @@ class MaintenanceEngine:
                 try:
                     last_dt = datetime.fromisoformat(
                         score.last_reinforced_at.replace('Z', '+00:00')
-                    ).replace(tzinfo=None)
+                    )
                     days_elapsed = (now - last_dt).total_seconds() / 86400.0
                 except (ValueError, TypeError):
                     days_elapsed = 0.0
@@ -1380,44 +1381,29 @@ class MaintenanceEngine:
         self.conn.commit()
 
         # Run passes in priority order
+        _pass_methods = [
+            ("contradiction_detection", self.pass_contradiction_detection),
+            ("orphaned_corrections", self.pass_orphaned_corrections),
+            ("near_duplicate_merging", self.pass_near_duplicate_merging),
+            ("entry_promotion", self.pass_entry_promotion),
+            ("stale_temporal_flagging", self.pass_stale_temporal_flagging),
+            ("compression_learning", self.pass_compression_learning),
+            ("behavioral_consolidation", self.pass_behavioral_consolidation),
+            ("uk_tier_promotion", self.pass_uk_tier_promotion),
+            ("confidence_decay", self.pass_confidence_decay),
+        ]
         try:
-            # 1. Contradictions (highest priority — wrong data is worse than redundant data)
-            if self._budget_remaining() > 0:
-                self.pass_contradiction_detection()
-
-            # 2. Orphaned corrections (close the loop on known issues)
-            if self._budget_remaining() > 0:
-                self.pass_orphaned_corrections()
-
-            # 3. Near-duplicate merging (reduce noise)
-            if self._budget_remaining() > 0:
-                self.pass_near_duplicate_merging()
-
-            # 4. Entry promotion (surface valuable content)
-            if self._budget_remaining() > 0:
-                self.pass_entry_promotion()
-
-            # 5. Stale flagging (informational only)
-            if self._budget_remaining() > 0:
-                self.pass_stale_temporal_flagging()
-
-            # 6. Compression learning (analyze codebook, promote patterns)
-            if self._budget_remaining() > 0:
-                self.pass_compression_learning()
-
-            # 7. Behavioral consolidation (reduce behavioral entry sprawl)
-            if self._budget_remaining() > 0:
-                self.pass_behavioral_consolidation()
-
-            # 8. User knowledge tier promotion/demotion
-            if self._budget_remaining() > 0:
-                self.pass_uk_tier_promotion()
-
-            # 9. Confidence decay (Hindsight)
-            if self._budget_remaining() > 0:
-                self.pass_confidence_decay()
-
-            self.conn.commit()
+            for _pass_name, _pass_fn in _pass_methods:
+                if self._budget_remaining() > 0:
+                    try:
+                        _pass_fn()
+                        self.conn.commit()
+                    except Exception as _pe:
+                        self.actions.append({
+                            "type": "pass_error",
+                            "pass": _pass_name,
+                            "detail": str(_pe),
+                        })
         except Exception as e:
             # Log the error but don't crash
             self.actions.append({

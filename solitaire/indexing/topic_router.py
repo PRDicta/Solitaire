@@ -363,8 +363,13 @@ class TopicRouter:
         )
         self.conn.commit()
 
-        # Refresh cache
-        self._cache_loaded = False
+        # Incremental cache update
+        if self._cache_loaded:
+            self._topic_cache.pop(source_id, None)
+            if target_id in self._topic_cache:
+                self._topic_cache[target_id]["entry_count"] = count
+        else:
+            pass
         return count
 
     # ─── Internal Strategies ─────────────────────────────────────────────

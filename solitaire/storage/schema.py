@@ -13,11 +13,14 @@ from pathlib import Path
 
 def _safe_fromisoformat(s):
     """Parse ISO datetime, handling 'Z' suffix (Python <3.11 compat).
-    Returns naive datetime to match codebase convention (utcnow everywhere)."""
+    Always returns timezone-aware datetime (UTC) for safe arithmetic
+    with datetime.now(timezone.utc)."""
     if s is None:
         return None
     dt = datetime.fromisoformat(s.replace('Z', '+00:00'))
-    return dt.replace(tzinfo=None) if dt.tzinfo else dt
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt
 from ..core.types import (
     RolodexEntry, ContentModality, EntryCategory, Tier
 )

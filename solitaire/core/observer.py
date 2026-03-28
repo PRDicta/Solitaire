@@ -32,7 +32,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import List, Optional, Dict, Any
 from collections import Counter
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import re
 
 
@@ -155,11 +155,17 @@ def _parse_iso_datetime(dt_str: Optional[str]) -> Optional[datetime]:
         return None
     try:
         # Try ISO format with timezone
-        return datetime.fromisoformat(dt_str.replace('Z', '+00:00'))
+        dt = datetime.fromisoformat(dt_str.replace('Z', '+00:00'))
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt
     except (ValueError, AttributeError):
         try:
             # Try basic ISO format without timezone
-            return datetime.fromisoformat(dt_str)
+            dt = datetime.fromisoformat(dt_str)
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+            return dt
         except (ValueError, AttributeError):
             return None
 
