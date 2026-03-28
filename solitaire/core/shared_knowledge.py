@@ -257,6 +257,24 @@ class SharedKnowledgeStore:
         self.conn.commit()
         return entry
 
+    @staticmethod
+    def _sanitize_fts_query(text: str) -> str:
+        """Sanitize a search string for FTS5 MATCH.
+
+        Converts pipe (|) to OR, strips other FTS5 special characters,
+        and replaces intra-word hyphens with spaces.
+        """
+        import re
+        # Pipe as OR operator
+        text = text.replace("|", " OR ")
+        # Strip FTS5 special chars (except OR which we just inserted)
+        text = re.sub(r'["\*\^\?\'\(\):;!]', '', text)
+        # Intra-word hyphens to spaces
+        text = re.sub(r'(?<=\w)-(?=\w)', ' ', text)
+        # Collapse whitespace
+        text = re.sub(r'\s+', ' ', text).strip()
+        return text
+
     def query(
         self,
         search_text: str,
@@ -286,7 +304,7 @@ class SharedKnowledgeStore:
             AND sk.superseded_by IS NULL
             AND (sk.expires_at IS NULL OR sk.expires_at > datetime('now'))
         """
-        params: List[Any] = [search_text]
+        params: List[Any] = [self._sanitize_fts_query(search_text)]
 
         if category:
             query += " AND sk.category = ?"

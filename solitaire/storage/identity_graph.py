@@ -815,8 +815,16 @@ class IdentityGraph:
         Non-core nodes are knowledge (engineering lessons, external facts,
         system architecture) that informs behavior through retrieval, not
         commitment tracking.
+
+        If the 'core' metadata key is explicitly set (by the enrichment
+        pipeline via promote_candidate), that value is authoritative.
+        Otherwise, falls back to _classify_core() heuristic so that
+        nodes created via add_node (e.g., seeding) get classified on
+        first access.
         """
-        return node.metadata.get("core", False)
+        if "core" in node.metadata:
+            return node.metadata["core"]
+        return self._classify_core(node.content, node.node_type)
 
     def set_core(self, node_id: str, core: bool) -> bool:
         """Set the core/non-core classification on a node."""
