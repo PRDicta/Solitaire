@@ -1,13 +1,12 @@
 """
-Session Residue: Compressed encoding of a session's texture.
+Session Residue + Session Tail: Context handoff across session boundaries.
 
-Written by the active Claude instance at session end (the only moment
-with full context), stored per-persona, loaded at next boot as priming.
+Residue: Compressed encoding of a session's texture, written by the active
+Claude instance. Dynamic budget (40-250+ tokens).
 
-Dynamic budget: as long as it needs to be for the next session to pick up
-context without archaeology. Thin sessions might need 40 tokens. Dense
-architecture sessions might need 250+. The residue should encode the arc,
-key moves, and enough specifics that the next boot can orient immediately.
+Session Tail: Rolling capture of the last N turns of conversation, written
+automatically on every ingest-turn. Loaded at next boot as "red-hot" context
+so the model knows exactly where the prior session ended. No retrieval needed.
 """
 
 import json
@@ -15,9 +14,14 @@ import os
 import sqlite3
 import uuid
 from datetime import datetime, timezone
-from typing import Optional
+from typing import List, Optional
 
 from solitaire.core.types import estimate_tokens
+
+# Max tokens per turn when truncating for the tail file
+_TAIL_TURN_MAX_TOKENS = 80
+_TAIL_DEFAULT_TURNS = 10
+_RESIDUE_HISTORY_MAX = 3
 
 
 # ─── Storage ────────────────────────────────────────────────────────────────
@@ -114,12 +118,33 @@ def write_residue(
         try:
             os.makedirs(residue_dir, exist_ok=True)
             residue_file = os.path.join(residue_dir, "latest_residue.json")
+            new_entry = {
+                "session_id": session_id,
+                "timestamp": now,
+                "residue": residue_text,
+                "tokens": tokens,
+            }
+            # Build history from existing file (keep last N prior entries)
+            history: List[dict] = []
+            try:
+                if os.path.exists(residue_file):
+                    with open(residue_file) as f:
+                        existing = json.load(f)
+                    # Support both old flat format and new latest+history format
+                    if "latest" in existing:
+                        prev = existing["latest"]
+                        history = existing.get("history", [])
+                    else:
+                        prev = existing
+                    if prev.get("residue"):
+                        history.insert(0, prev)
+                    history = history[:_RESIDUE_HISTORY_MAX]
+            except Exception:
+                pass  # Corrupted file -- start fresh history
             with open(residue_file, "w") as f:
                 json.dump({
-                    "session_id": session_id,
-                    "timestamp": now,
-                    "residue": residue_text,
-                    "tokens": tokens,
+                    "latest": new_entry,
+                    "history": history,
                 }, f, indent=2)
         except Exception:
             warnings.append("File-based fallback write failed; DB entry saved.")
@@ -170,12 +195,14 @@ def load_latest_residue(
             if os.path.exists(residue_file):
                 with open(residue_file) as f:
                     data = json.load(f)
+                # Support both old flat format and new latest+history format
+                entry = data.get("latest", data) if "latest" in data else data
                 # Don't load our own session's residue
-                if data.get("session_id") != current_session_id:
+                if entry.get("session_id") != current_session_id:
                     return {
-                        "text": data.get("residue", ""),
-                        "timestamp": data.get("timestamp"),
-                        "session_id": data.get("session_id"),
+                        "text": entry.get("residue", ""),
+                        "timestamp": entry.get("timestamp"),
+                        "session_id": entry.get("session_id"),
                     }
         except Exception:
             pass
@@ -276,6 +303,186 @@ def build_residue_block(residue_text: str, timestamp: Optional[str] = None, sess
     header += " ═══"
 
     return f"{header}\n\n{residue_text.strip()}\n\n═══ END RESIDUE ═══"
+
+
+# ─── Session Tail ──────────────────────────────────────────────────────────
+
+def _truncate_content(text: str, max_tokens: int) -> str:
+    """Truncate text to approximately max_tokens, preserving sentence boundaries."""
+    tokens = estimate_tokens(text)
+    if tokens <= max_tokens:
+        return text
+    # Rough char-per-token ratio, then trim to last sentence boundary
+    target_chars = int(max_tokens * 3.5)
+    truncated = text[:target_chars]
+    # Try to end at a sentence boundary
+    for sep in (". ", ".\n", "? ", "! "):
+        last = truncated.rfind(sep)
+        if last > target_chars * 0.5:
+            return truncated[:last + 1] + " [...]"
+    return truncated + " [...]"
+
+
+def write_session_tail(
+    conn: sqlite3.Connection,
+    session_id: str,
+    persona_key: str = "",
+    persona_dir: Optional[str] = None,
+    max_turns: int = _TAIL_DEFAULT_TURNS,
+) -> dict:
+    """
+    Write a rolling session tail file with the last N turns of conversation.
+
+    Called on every ingest-turn to maintain a rolling window. Survives crashes
+    because it's written to disk after each turn pair ingestion.
+
+    Args:
+        conn: SQLite connection (must have messages table)
+        session_id: Current session ID
+        persona_key: Active persona key
+        persona_dir: Mounted persona directory (persistent)
+        max_turns: Number of message rows to capture (default 10)
+
+    Returns:
+        Status dict.
+    """
+    if not session_id:
+        return {"status": "error", "detail": "No session ID"}
+
+    # Query the messages table for the last N rows of this session
+    try:
+        rows = conn.execute("""
+            SELECT role, content, turn_number, token_count, timestamp
+            FROM messages
+            WHERE conversation_id = ?
+            ORDER BY turn_number DESC, timestamp DESC
+            LIMIT ?
+        """, (session_id, max_turns)).fetchall()
+    except Exception as e:
+        return {"status": "error", "detail": f"Messages query failed: {e}"}
+
+    if not rows:
+        return {"status": "ok", "detail": "No messages to capture"}
+
+    # Reverse to chronological order and truncate each turn
+    rows.reverse()
+    turns = []
+    for role, content, turn_number, token_count, timestamp in rows:
+        truncated = _truncate_content(content, _TAIL_TURN_MAX_TOKENS)
+        turns.append({
+            "role": role,
+            "content": truncated,
+            "turn_number": turn_number,
+            "timestamp": timestamp,
+        })
+
+    now = datetime.now(timezone.utc).isoformat()
+    tail_data = {
+        "session_id": session_id,
+        "timestamp": now,
+        "turn_count": len(turns),
+        "turns": turns,
+    }
+
+    # Write to file
+    tail_dir = None
+    if persona_dir:
+        tail_dir = os.path.join(persona_dir, "residue")
+    else:
+        tail_dir = _residue_dir(conn, persona_key)
+
+    if tail_dir:
+        try:
+            os.makedirs(tail_dir, exist_ok=True)
+            tail_file = os.path.join(tail_dir, "latest_tail.json")
+            with open(tail_file, "w") as f:
+                json.dump(tail_data, f, indent=2)
+        except Exception as e:
+            return {"status": "error", "detail": f"Tail file write failed: {e}"}
+
+    return {"status": "ok", "turns_captured": len(turns), "session_id": session_id}
+
+
+def load_session_tail(
+    conn: sqlite3.Connection,
+    current_session_id: str,
+    persona_key: str = "",
+    persona_dir: Optional[str] = None,
+) -> dict:
+    """
+    Load the session tail from the prior session.
+
+    Returns:
+        Dict with keys: turns (list), timestamp (str|None), session_id (str|None).
+        Empty turns list if none found.
+    """
+    empty = {"turns": [], "timestamp": None, "session_id": None}
+
+    tail_dir = None
+    if persona_dir:
+        tail_dir = os.path.join(persona_dir, "residue")
+    else:
+        tail_dir = _residue_dir(conn, persona_key)
+
+    if not tail_dir:
+        return empty
+
+    tail_file = os.path.join(tail_dir, "latest_tail.json")
+    try:
+        if not os.path.exists(tail_file):
+            return empty
+        with open(tail_file) as f:
+            data = json.load(f)
+        # Don't load our own session's tail
+        if data.get("session_id") == current_session_id:
+            return empty
+        return {
+            "turns": data.get("turns", []),
+            "timestamp": data.get("timestamp"),
+            "session_id": data.get("session_id"),
+        }
+    except Exception:
+        return empty
+
+
+def build_tail_block(tail_data: dict) -> str:
+    """
+    Format a session tail for injection into the context block.
+
+    Args:
+        tail_data: Dict from load_session_tail with turns, timestamp, session_id.
+
+    Returns:
+        Formatted block string, or empty string if no turns.
+    """
+    turns = tail_data.get("turns", [])
+    if not turns:
+        return ""
+
+    meta_parts = []
+    timestamp = tail_data.get("timestamp")
+    session_id = tail_data.get("session_id")
+    if timestamp:
+        ts_display = timestamp[:16].replace("T", " ")
+        meta_parts.append(f"written: {ts_display}")
+    if session_id:
+        meta_parts.append(f"session: {session_id[:8]}")
+
+    header = "═══ SESSION TAIL (prior session)"
+    if meta_parts:
+        header += f" [{', '.join(meta_parts)}]"
+    header += " ═══"
+
+    lines = [header, ""]
+    for turn in turns:
+        role = turn.get("role", "unknown").upper()
+        content = turn.get("content", "").strip()
+        if content:
+            lines.append(f"[{role}] {content}")
+            lines.append("")
+
+    lines.append("═══ END TAIL ═══")
+    return "\n".join(lines)
 
 
 # ─── Internal ───────────────────────────────────────────────────────────────
