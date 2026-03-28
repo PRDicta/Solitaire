@@ -142,6 +142,9 @@ class TheLibrarian:
             context_builder=self.context_builder,
         )
 
+        # Wire topic router into agent for enrichment-time inference
+        self.librarian_agent._topic_router = self.topic_router
+
         # Pass tier config
         self.librarian_agent.promotion_threshold = self.config.promotion_threshold
         self.librarian_agent.demotion_threshold = self.config.demotion_threshold

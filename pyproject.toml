@@ -55,7 +55,7 @@ Repository = "https://github.com/PRDicta/Solitaire-for-Agents"
 include = ["solitaire*"]
 
 [tool.setuptools.package-data]
-solitaire = ["py.typed"]
+solitaire = ["py.typed", "retrieval/project_aliases.yaml"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

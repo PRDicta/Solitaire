@@ -417,6 +417,7 @@ class SolitaireEngine:
         orchestrator = RecallOrchestrator(
             conn=self._lib.rolodex.conn,
             rolodex=self._lib.rolodex,
+            topic_router=getattr(self._lib, 'topic_router', None),
         )
         recall_result = orchestrator.run(query)
 
@@ -1193,6 +1194,9 @@ class SolitaireEngine:
         """
         Re-ingest messages that have no corresponding entries.
 
+        Creates entries directly in the target session (not the current
+        booted session) to avoid cross-session contamination.
+
         Args:
             session_id: Scope to a specific session. Defaults to last 5 sessions.
 
@@ -1202,6 +1206,7 @@ class SolitaireEngine:
         self._ensure_booted("integrity_repair")
         conn = self._lib.rolodex.conn
         import hashlib
+        from .core.types import RolodexEntry, EntryCategory, ContentModality
 
         existing_fps = set()
         for row in conn.execute(
@@ -1238,12 +1243,21 @@ class SolitaireEngine:
                     continue
 
                 try:
-                    entries = self._run_async(
-                        self._lib.ingest(msg["role"], msg["content"])
+                    # Create entry directly with the correct session ID
+                    # instead of going through ingest() which would write
+                    # to the current booted session.
+                    entry = RolodexEntry(
+                        conversation_id=sid,
+                        content=msg["content"],
+                        content_type=ContentModality.CONVERSATIONAL,
+                        category=EntryCategory.NOTE,
+                        tags=["repaired"],
+                        source_range={"turn": msg["turn_number"]} if msg["turn_number"] else {},
+                        metadata={"repair_source": "integrity_repair"},
                     )
-                    if entries:
-                        existing_fps.add(fp)
-                        repaired += 1
+                    self._lib.rolodex.create_entry(entry)
+                    existing_fps.add(fp)
+                    repaired += 1
                 except Exception:
                     pass
 

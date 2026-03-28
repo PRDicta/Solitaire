@@ -68,10 +68,12 @@ class RecallOrchestrator:
         conn: sqlite3.Connection,
         rolodex,  # Rolodex instance
         confidence_threshold: float = 0.45,
+        topic_router=None,  # Optional TopicRouter for topic-scoped search
     ):
         self.conn = conn
         self.rolodex = rolodex
         self.confidence_threshold = confidence_threshold
+        self._topic_router = topic_router
 
         # Initialize pipeline components
         self.trigger = RecallTrigger(conn)
@@ -128,6 +130,31 @@ class RecallOrchestrator:
         all_candidates, seen_ids, queries_fired, merged_category_bias = (
             self._fire_queries(trigger_result)
         )
+
+        # Step 3b: Topic-scoped search — supplement with topic-matched entries
+        if self._topic_router and trigger_result.matched_topics:
+            try:
+                for label, count, conf in trigger_result.matched_topics[:2]:
+                    # Find the topic ID from the router's cache
+                    topic_id = self._resolve_topic_id(label)
+                    if topic_id:
+                        topic_group = self._topic_router.get_topic_group(topic_id)
+                        for tid in topic_group:
+                            topic_results = self.rolodex.keyword_search_by_topic(
+                                message, tid, limit=5
+                            )
+                            for entry, score in topic_results:
+                                if entry.id not in seen_ids:
+                                    seen_ids.add(entry.id)
+                                    all_candidates.append((entry, score * conf))
+                        queries_fired.append({
+                            "query": f"topic:{label}",
+                            "signal": "topic_scoped",
+                            "priority": conf,
+                            "fresh": False,
+                        })
+            except Exception:
+                pass  # Topic search is supplementary
 
         if not all_candidates:
             return RecallResult(
@@ -275,6 +302,17 @@ class RecallOrchestrator:
             pass  # Graph expansion is additive, never blocks recall
 
         return count
+
+    def _resolve_topic_id(self, label: str) -> Optional[str]:
+        """Resolve a topic label to its ID via the topic router's cache."""
+        if not self._topic_router:
+            return None
+        self._topic_router._ensure_cache_loaded()
+        label_lower = label.lower()
+        for topic_id, topic_data in self._topic_router._topic_cache.items():
+            if topic_data.get("label", "").lower() == label_lower:
+                return topic_id
+        return None
 
     def _fire_queries(
         self, result: TriggerResult
