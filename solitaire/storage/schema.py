@@ -278,6 +278,24 @@ CREATE INDEX IF NOT EXISTS idx_manifest_entries_manifest
     ON manifest_entries(manifest_id);
 CREATE INDEX IF NOT EXISTS idx_manifest_entries_entry
     ON manifest_entries(entry_id);
+
+-- Pending contradictions: tracked conflicts detected at ingestion or maintenance
+CREATE TABLE IF NOT EXISTS pending_contradictions (
+    id TEXT PRIMARY KEY,
+    entry_id_old TEXT NOT NULL,
+    entry_id_new TEXT NOT NULL,
+    conflict_type TEXT NOT NULL,
+    description TEXT NOT NULL,
+    detected_at DATETIME NOT NULL,
+    resolved_at DATETIME,
+    resolution TEXT,
+    resolved_by TEXT,
+    FOREIGN KEY (entry_id_old) REFERENCES rolodex_entries(id),
+    FOREIGN KEY (entry_id_new) REFERENCES rolodex_entries(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_pending_contradictions_unresolved
+    ON pending_contradictions(resolved_at) WHERE resolved_at IS NULL;
 """
 # ─── Database Initialization ─────────────────────────────────────────────────
 def _is_fuse_mount(path: Path) -> bool:

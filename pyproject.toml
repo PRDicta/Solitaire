@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "solitaire"
-version = "1.3.3"
+version = "1.4.0"
 description = "Persistent memory, self-correcting retrieval, and evolving identity for AI agents. Local-first, model-agnostic."
 readme = "README.md"
 license = {text = "AGPL-3.0-or-later"}

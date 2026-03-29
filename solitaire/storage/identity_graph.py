@@ -1755,6 +1755,180 @@ class IdentityGraph:
 
         return prompt, signal_def
 
+    # ─── Phase 3: Engine as Identity Authority ────────────────────────────
+
+    def build_identity_context_block(
+        self,
+        budget_tokens: int = 1500,
+    ) -> str:
+        """
+        Assemble the identity context block for boot injection.
+
+        Renders the living identity state as a readable text block:
+        - North star (motivation)
+        - Active growth edges (with status)
+        - Recent realizations (last 30 days)
+        - Top patterns (with observation counts and valence)
+        - Open tensions
+
+        This supplements (not replaces) the persona YAML seed. The YAML
+        provides the baseline traits. This method provides the living state
+        from the identity graph. Together they make identity portable across
+        host models.
+
+        Returns formatted text block, or empty string if no identity data.
+        """
+        char_budget = budget_tokens * 4
+
+        north_star = self.get_north_star()
+        growth_edges = self.get_active_growth_edges()
+        realizations = self.get_recent_realizations(days=30, limit=5)
+        patterns = self.get_top_patterns(limit=8)
+        tensions = self.get_open_tensions()
+
+        if not any([north_star, growth_edges, realizations, patterns, tensions]):
+            return ""
+
+        lines = ["═══ IDENTITY CONTEXT ═══", ""]
+
+        # North Star
+        if north_star:
+            lines.append(f"North Star: {north_star.content}")
+            lines.append("")
+
+        # Growth edges
+        if growth_edges:
+            lines.append("Growth edges (active):")
+            for ge in growth_edges:
+                status = ge.status or "identified"
+                last_date = ge.last_seen[:10] if ge.last_seen else "unknown"
+                lines.append(f"- {ge.content} (status: {status}, last: {last_date})")
+                # Include texture from metadata if present
+                texture = ge.metadata.get("texture") if ge.metadata else None
+                if texture:
+                    lines.append(f"  ~ {texture}")
+            lines.append("")
+
+        # Recent realizations
+        if realizations:
+            lines.append("Recent realizations:")
+            for r in realizations:
+                date = r.first_seen[:10] if r.first_seen else ""
+                lines.append(f"- {r.content} ({date})")
+                texture = r.metadata.get("texture") if r.metadata else None
+                if texture:
+                    lines.append(f"  ~ {texture}")
+            lines.append("")
+
+        # Known patterns
+        if patterns:
+            lines.append("Known patterns:")
+            for p in patterns:
+                trajectory = p.trajectory or "stable"
+                count = p.observation_count or 0
+                lines.append(f"- {p.content} ({trajectory}, observed {count}x)")
+                texture = p.metadata.get("texture") if p.metadata else None
+                if texture:
+                    lines.append(f"  ~ {texture}")
+            lines.append("")
+
+        # Open tensions
+        if tensions:
+            lines.append("Open tensions:")
+            for t in tensions:
+                lines.append(f"- {t.content}")
+                texture = t.metadata.get("texture") if t.metadata else None
+                if texture:
+                    lines.append(f"  ~ {texture}")
+            lines.append("")
+
+        lines.append("═══ END IDENTITY CONTEXT ═══")
+        block = "\n".join(lines)
+
+        # Truncate if over budget: drop tensions first, then patterns, then realizations
+        if len(block) > char_budget:
+            # Rebuild without tensions
+            tensions = []
+            block = self._rebuild_identity_block(
+                north_star, growth_edges, realizations, patterns, tensions
+            )
+        if len(block) > char_budget:
+            patterns = patterns[:4]
+            block = self._rebuild_identity_block(
+                north_star, growth_edges, realizations, patterns, tensions
+            )
+        if len(block) > char_budget:
+            realizations = realizations[:3]
+            block = self._rebuild_identity_block(
+                north_star, growth_edges, realizations, patterns, tensions
+            )
+        if len(block) > char_budget:
+            block = block[:char_budget - 3] + "..."
+
+        return block
+
+    def _rebuild_identity_block(
+        self,
+        north_star,
+        growth_edges,
+        realizations,
+        patterns,
+        tensions,
+    ) -> str:
+        """Helper: rebuild identity block from components (for truncation)."""
+        lines = ["═══ IDENTITY CONTEXT ═══", ""]
+        if north_star:
+            lines.append(f"North Star: {north_star.content}")
+            lines.append("")
+        if growth_edges:
+            lines.append("Growth edges (active):")
+            for ge in growth_edges:
+                status = ge.status or "identified"
+                last_date = ge.last_seen[:10] if ge.last_seen else "unknown"
+                lines.append(f"- {ge.content} (status: {status}, last: {last_date})")
+                texture = ge.metadata.get("texture") if ge.metadata else None
+                if texture:
+                    lines.append(f"  ~ {texture}")
+            lines.append("")
+        if realizations:
+            lines.append("Recent realizations:")
+            for r in realizations:
+                date = r.first_seen[:10] if r.first_seen else ""
+                lines.append(f"- {r.content} ({date})")
+            lines.append("")
+        if patterns:
+            lines.append("Known patterns:")
+            for p in patterns:
+                trajectory = p.trajectory or "stable"
+                count = p.observation_count or 0
+                lines.append(f"- {p.content} ({trajectory}, observed {count}x)")
+            lines.append("")
+        if tensions:
+            lines.append("Open tensions:")
+            for t in tensions:
+                lines.append(f"- {t.content}")
+            lines.append("")
+        lines.append("═══ END IDENTITY CONTEXT ═══")
+        return "\n".join(lines)
+
+    def build_commitments_block(
+        self,
+        session_id: Optional[str] = None,
+        token_budget: int = 500,
+    ) -> str:
+        """
+        Wrapper for build_commitment_block that works without a session_id.
+
+        When called without session_id (e.g., from engine boot context),
+        generates a session ID automatically. Returns just the formatted
+        block string (not the metadata tuple).
+        """
+        if session_id is None:
+            session_id = f"boot_{uuid.uuid4().hex[:8]}"
+
+        block, _meta = self.build_commitment_block(session_id, token_budget)
+        return block
+
     def build_commitment_block(
         self,
         session_id: str,

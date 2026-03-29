@@ -33,6 +33,9 @@ PROVENANCE_AUTHORITY = {
     "user-stated": 1.0,        # User said it directly. Highest trust.
     "system": 0.95,            # System-generated (e.g., boot, enrichment).
     "assistant-inferred": 0.7, # Ward inferred it. Reasonable but fallible.
+    "external-import": 0.65,   # Imported via symbiosis. Trusted but unverified.
+    "observed": 0.6,           # Observer/scanner generated. Pattern-derived.
+    "inferred": 0.5,           # Enrichment pipeline output. Lowest active trust.
     "unknown": 0.5,            # No provenance. Minimal trust.
 }
 
@@ -58,7 +61,10 @@ DECAY_RATES = {
 CONFIDENCE_FLOORS = {
     "user-stated": 0.4,
     "system": 0.3,
+    "external-import": 0.2,
     "assistant-inferred": 0.15,
+    "observed": 0.15,
+    "inferred": 0.1,
     "unknown": 0.1,
 }
 

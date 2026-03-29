@@ -36,7 +36,9 @@ from .memory_weight import (
 # ─── Constants ──────────────────────────────────────────────────────────────
 
 USED_BOOST = 0.05          # Significance bump per confirmed use
+IDENTITY_USED_BOOST = 0.08 # Higher boost for identity-relevant entries that were used
 IGNORED_PENALTY = 0.1      # Significance penalty after 3+ ignores
+IDENTITY_IGNORED_PENALTY = 0.05  # Gentler penalty for identity-relevant entries
 IGNORED_THRESHOLD = 3      # Consecutive ignores before penalty applies
 STALE_DAYS = 30            # Days without recall before confidence decay
 SIGNIFICANCE_CAP = 1.0
@@ -185,16 +187,25 @@ def adjust_weights(
     conn: sqlite3.Connection,
     session_id: Optional[str] = None,
     now: Optional[datetime] = None,
+    identity_keywords: Optional[Set[str]] = None,
 ) -> Dict[str, Any]:
     """
     Adjust entry significance weights based on accumulated retrieval outcomes.
 
     Rules:
         - Entry recalled AND used: significance += USED_BOOST (cap 1.0)
+          (identity-relevant entries get IDENTITY_USED_BOOST instead)
         - Entry recalled AND ignored IGNORED_THRESHOLD+ times: significance -= IGNORED_PENALTY (floor 0.1)
+          (identity-relevant entries get gentler IDENTITY_IGNORED_PENALTY)
         - Entry never recalled in STALE_DAYS: apply confidence decay
 
-    Can be scoped to a single session or run across all data.
+    Args:
+        conn: Database connection.
+        session_id: Scope to a single session (or None for all).
+        now: Current time (default: utcnow).
+        identity_keywords: Optional set of keywords from active identity nodes.
+            Entries whose content overlaps with these keywords are considered
+            identity-relevant and get differentiated boost/penalty.
 
     Returns:
         Dict with: boosted count, penalized count, decayed count, details.
@@ -218,7 +229,10 @@ def adjust_weights(
 
     for row in used_rows:
         eid = row["entry_id"]
-        updated = _boost_significance(conn, eid, USED_BOOST)
+        boost = USED_BOOST
+        if identity_keywords:
+            boost = _identity_aware_boost(conn, eid, identity_keywords, boost)
+        updated = _boost_significance(conn, eid, boost)
         if updated:
             stats["boosted"] += 1
 
@@ -249,7 +263,10 @@ def adjust_weights(
 
     for row in ignored_rows:
         eid = row["entry_id"]
-        updated = _penalize_significance(conn, eid, IGNORED_PENALTY)
+        penalty = IGNORED_PENALTY
+        if identity_keywords:
+            penalty = _identity_aware_penalty(conn, eid, identity_keywords, penalty)
+        updated = _penalize_significance(conn, eid, penalty)
         if updated:
             stats["penalized"] += 1
 
@@ -419,6 +436,46 @@ def _compute_match_confidence(
     if ratio >= 0.5:
         return min(1.0, 0.7 + (ratio - 0.5) * 0.6)
     return ratio * 1.4  # Linear up to 0.7 at 50%
+
+
+def _is_identity_relevant(
+    conn: sqlite3.Connection,
+    entry_id: str,
+    identity_keywords: Set[str],
+) -> bool:
+    """Check if an entry's content overlaps with identity keywords."""
+    row = conn.execute(
+        "SELECT content FROM rolodex_entries WHERE id = ?", (entry_id,)
+    ).fetchone()
+    if not row or not row["content"]:
+        return False
+    content_words = set(re.findall(r'\b\w{4,}\b', row["content"].lower()))
+    overlap = content_words & identity_keywords
+    return len(overlap) >= 2
+
+
+def _identity_aware_boost(
+    conn: sqlite3.Connection,
+    entry_id: str,
+    identity_keywords: Set[str],
+    default_boost: float,
+) -> float:
+    """Return higher boost for identity-relevant entries."""
+    if _is_identity_relevant(conn, entry_id, identity_keywords):
+        return IDENTITY_USED_BOOST
+    return default_boost
+
+
+def _identity_aware_penalty(
+    conn: sqlite3.Connection,
+    entry_id: str,
+    identity_keywords: Set[str],
+    default_penalty: float,
+) -> float:
+    """Return gentler penalty for identity-relevant entries."""
+    if _is_identity_relevant(conn, entry_id, identity_keywords):
+        return IDENTITY_IGNORED_PENALTY
+    return default_penalty
 
 
 def _boost_significance(

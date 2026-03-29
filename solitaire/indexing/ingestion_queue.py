@@ -153,6 +153,14 @@ class IngestionQueue:
         The stub has content and FTS-searchable text but no embedding
         or enriched categorization yet. That comes from background workers.
         """
+        # Derive provenance from message role
+        role_to_provenance = {
+            "user": "user-stated",
+            "assistant": "assistant-inferred",
+            "system": "system",
+        }
+        provenance = role_to_provenance.get(message.role.value, "unknown")
+
         return RolodexEntry(
             id=str(uuid.uuid4()),
             conversation_id=conversation_id,
@@ -164,6 +172,7 @@ class IngestionQueue:
             embedding=None,  # Will be filled by enrichment
             tier=Tier.COLD,
             metadata={"enrichment_status": "pending"},
+            provenance=provenance,
         )
 
     # ─── Enqueue ─────────────────────────────────────────────────────────

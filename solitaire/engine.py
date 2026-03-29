@@ -425,10 +425,19 @@ class SolitaireEngine:
         from .retrieval.recall_orchestrator import RecallOrchestrator
         from .core.types import LibrarianResponse, LibrarianQuery
 
+        # Load identity graph for identity-aware recall (optional, non-fatal)
+        _identity_graph = None
+        try:
+            from .storage.identity_graph import IdentityGraph
+            _identity_graph = IdentityGraph(self._lib.rolodex.conn)
+        except Exception:
+            pass
+
         orchestrator = RecallOrchestrator(
             conn=self._lib.rolodex.conn,
             rolodex=self._lib.rolodex,
             topic_router=getattr(self._lib, 'topic_router', None),
+            identity_graph=_identity_graph,
         )
         recall_result = orchestrator.run(query)
 
@@ -2233,162 +2242,16 @@ class SolitaireEngine:
         return "\n\n".join(parts) + "\n"
 
     def _build_cognitive_profile(self) -> str:
-        """Build the cognitive profile block from persona data."""
+        """Build the cognitive profile block from persona data.
+
+        Delegates to solitaire.core.cognitive_profile.build_cognitive_profile(),
+        the single source of truth for identity rendering (Phase 3).
+        """
         if not self._lib.persona:
             return ""
-        p = self._lib.persona
-        identity = p.identity
-        traits = p.traits
-
-        lines = [
-            "═══ COGNITIVE PROFILE ═══",
-            "",
-            f"Identity: {identity.name} ({identity.role})",
-        ]
-        if hasattr(identity, 'domain_scope') and identity.domain_scope:
-            lines.append(f"Primary domain: {identity.domain_scope}")
-        lines.append("")
-        lines.append("Disposition:")
-        # All 7 trait dimensions with 5 intensity bands.
-        # Every trait is rendered regardless of value. Omission erases personality.
-        trait_descriptions = {
-            "observance": {
-                "very_high": ("defining trait", "flags patterns, anomalies, and edge cases before they surface"),
-                "high": ("highly observant", "flags patterns, anomalies, and things the user might miss"),
-                "moderate": ("observant", "notices patterns and inconsistencies"),
-                "low": ("selectively observant", "focuses on what's directly relevant"),
-                "very_low": ("narrowly focused", "engages with what's explicitly presented"),
-            },
-            "assertiveness": {
-                "very_high": ("defining trait", "leads with claims, no hedging, expects the reader to keep up"),
-                "high": ("direct and concise", "no hedging, data-first delivery"),
-                "moderate": ("measured directness", "states positions clearly but picks moments"),
-                "low": ("gentle", "leads with questions, offers rather than asserts"),
-                "very_low": ("deferential", "follows the user's lead, rarely volunteers direction"),
-            },
-            "conviction": {
-                "very_high": ("defining trait", "holds positions firmly, requires strong counter-evidence to move"),
-                "high": ("high conviction", "pushes back with evidence when the user may be wrong"),
-                "moderate": ("steady conviction", "holds positions but stays open to counter-evidence"),
-                "low": ("exploratory", "prefers to weigh options rather than commit early"),
-                "very_low": ("flexible", "adapts to the user's position readily, avoids strong claims"),
-            },
-            "warmth": {
-                "very_high": ("defining trait", "deeply relational, invests in the person first, the work second"),
-                "high": ("warm", "builds rapport, invests in the person behind the task"),
-                "moderate": ("moderate warmth", "professional but not cold, reads the room"),
-                "low": ("reserved", "keeps focus on the work, warmth is earned not performed"),
-                "very_low": ("clinical", "purely task-oriented, minimal interpersonal investment"),
-            },
-            "humor": {
-                "very_high": ("defining trait", "humor woven into most exchanges, lightens everything"),
-                "high": ("witty", "uses humor naturally, lightens tension without undermining substance"),
-                "moderate": ("dry humor", "occasional levity when it fits, never forces it"),
-                "low": ("serious-toned", "humor is rare and deliberate, defaults to substance"),
-                "very_low": ("no humor", "all substance, no levity"),
-            },
-            "initiative": {
-                "very_high": ("defining trait", "builds, ships, and decides without waiting for direction"),
-                "high": ("proactive", "initiates, suggests, and builds without being asked"),
-                "moderate": ("responsive initiative", "acts independently on familiar ground, checks on new territory"),
-                "low": ("responsive", "waits for direction, executes precisely what's asked"),
-                "very_low": ("passive", "acts only on explicit instruction, never anticipates"),
-            },
-            "empathy": {
-                "very_high": ("defining trait", "tracks emotional undercurrents and adjusts before being asked"),
-                "high": ("empathetic", "tracks emotional undercurrents and adjusts approach accordingly"),
-                "moderate": ("emotionally aware", "reads the room, gives space when it matters"),
-                "low": ("task-focused", "prioritizes the work, engages emotionally when directly relevant"),
-                "very_low": ("detached", "minimal emotional tracking, purely output-oriented"),
-            },
-        }
-        trait_dict = traits.to_dict() if hasattr(traits, 'to_dict') else {}
-        baseline_dict = {}
-        if hasattr(p, '_baseline_traits') and p._baseline_traits:
-            baseline_dict = p._baseline_traits.to_dict() if hasattr(p._baseline_traits, 'to_dict') else {}
-
-        # ── Texture layer: signal-history-driven trait specificity ──
-        trait_textures = {}
-        try:
-            from .core.drift_analytics import DriftAnalytics, get_drift_entries_query
-            _drift_query = get_drift_entries_query(limit=500)
-            _drift_rows = self._lib.rolodex.conn.execute(_drift_query).fetchall()
-            if _drift_rows:
-                _analytics = DriftAnalytics(persona=p)
-                _report = _analytics.analyze([dict(r) for r in _drift_rows])
-                for _tn in trait_descriptions:
-                    _affecting = []
-                    for _sk, _ss in _report.signal_stats.items():
-                        if _tn in _ss.traits_impacted:
-                            _affecting.append((_sk, _ss.total_fires, _ss.sessions_active, _ss.traits_impacted[_tn]))
-                    if not _affecting:
-                        continue
-                    _affecting.sort(key=lambda x: x[1], reverse=True)
-                    _parts = []
-                    for _sk, _fires, _sessions, _net in _affecting[:3]:
-                        _readable = _sk.replace("_", " ")
-                        _dir = "reinforcing" if _net > 0 else "tempering"
-                        _sess_word = "session" if _sessions == 1 else "sessions"
-                        _parts.append(f"{_readable} ({_fires}x across {_sessions} {_sess_word}, {_dir})")
-                    if _parts:
-                        trait_textures[_tn] = "; ".join(_parts)
-        except Exception:
-            pass  # Texture is additive — graceful degradation
-
-        for trait_name, bands in trait_descriptions.items():
-            val = trait_dict.get(trait_name, 0.5)
-            if val >= 0.85:
-                label, desc = bands["very_high"]
-            elif val >= 0.65:
-                label, desc = bands["high"]
-            elif val >= 0.40:
-                label, desc = bands["moderate"]
-            elif val >= 0.20:
-                label, desc = bands["low"]
-            else:
-                label, desc = bands["very_low"]
-            line = f"- {label} — {desc}"
-            # Show drift direction if trait has moved from baseline
-            base_val = baseline_dict.get(trait_name)
-            if base_val is not None and abs(val - base_val) >= 0.005:
-                drift_dir = "↑" if val > base_val else "↓"
-                line = f"{line} (drift: {drift_dir}{abs(val - base_val):.2f})"
-            lines.append(line)
-            # Append texture if available
-            if trait_name in trait_textures:
-                lines.append(f"  texture: {trait_textures[trait_name]}")
-
-        # ── Growth milestones: recent trait movement with context ──
-        growth_lines = []
-        try:
-            _state = p.state if hasattr(p, 'state') and p.state else None
-            if _state and hasattr(_state, 'trait_history'):
-                for _g_trait, _g_entries in _state.trait_history.items():
-                    if len(_g_entries) < 3:
-                        continue
-                    _first_val = _g_entries[0].effective_value if hasattr(_g_entries[0], 'effective_value') else _g_entries[0].get("effective_value", 0)
-                    _last_val = _g_entries[-1].effective_value if hasattr(_g_entries[-1], 'effective_value') else _g_entries[-1].get("effective_value", 0)
-                    _movement = _last_val - _first_val
-                    if abs(_movement) >= 0.005:
-                        _dir_word = "reinforced" if _movement > 0 else "softened"
-                        _sess_count = len(set(
-                            (e.session_id if hasattr(e, 'session_id') else e.get("session_id", ""))
-                            for e in _g_entries
-                        ))
-                        _gs_word = "session" if _sess_count == 1 else "sessions"
-                        growth_lines.append(
-                            f"{_g_trait} {_dir_word} over {_sess_count} {_gs_word} "
-                            f"({_first_val:.3f} → {_last_val:.3f})"
-                        )
-        except Exception:
-            pass  # Growth milestones are additive
-
-        if growth_lines:
-            lines.append(f"Recent growth: {'; '.join(growth_lines)}")
-
-        lines.append("")
-        lines.append("═══ END COGNITIVE PROFILE ═══")
-        return "\n".join(lines)
+        from .core.cognitive_profile import build_cognitive_profile
+        conn = self._lib.rolodex.conn if self._lib.rolodex else None
+        return build_cognitive_profile(self._lib.persona, conn=conn)
 
     # ─── Internal: Enrichment Pipeline ────────────────────────────────────
 
