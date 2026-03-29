@@ -1113,7 +1113,9 @@ def run_retroactive_scoring(
                 "signal_ids": written,
             }
         return None
-    except Exception:
+    except Exception as exc:
+        import sys as _sys
+        print(f"[identity_measurement] run_retroactive_scoring failed: {exc}", file=_sys.stderr)
         return None  # Additive; never block ingestion
 
 
@@ -1144,7 +1146,9 @@ def run_implicit_detection(
                 stats["unlinked_signal_ids"] = unlinked
             return stats
         return None
-    except Exception:
+    except Exception as exc:
+        import sys as _sys
+        print(f"[identity_measurement] run_implicit_detection failed: {exc}", file=_sys.stderr)
         return None  # Additive; never block ingestion
 
 
