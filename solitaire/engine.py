@@ -1730,6 +1730,26 @@ class SolitaireEngine:
                 result["status"] = "complete"
                 result["persona_key"] = getattr(ctx, 'created_persona_key', None)
 
+            # Materialize persona on terminal apply step:
+            # seed identity graph so commitments/signals work from day one.
+            if (step.metadata or {}).get("terminal") and getattr(ctx, "generated_persona", None):
+                try:
+                    from .core.onboarding import apply_scaffolding
+                    persona_key = getattr(ctx, "persona_key", "") or "default"
+                    conn = self._lib.rolodex.conn if self._lib else None
+                    templates_dir = str(self.persona_dir.parent / "persona_templates")
+                    if conn:
+                        apply_scaffolding(
+                            template_key=persona_key,
+                            templates_dir=templates_dir,
+                            rolodex_conn=conn,
+                            session_id=session_id,
+                            persona_yaml=ctx.generated_persona,
+                        )
+                        result["scaffolding_applied"] = True
+                except Exception as exc:
+                    result["scaffolding_warning"] = str(exc)
+
             return result
         except Exception as e:
             return {"error": f"Onboarding flow-step error: {e}"}

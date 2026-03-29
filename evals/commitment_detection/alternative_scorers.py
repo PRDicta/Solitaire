@@ -44,6 +44,7 @@ _GE_REFLECTIVE = "idn_seed_ge_01"
 _GE_OBSERVATION = "idn_b19ad224aa24"
 _PAT_DEFLECTING = "idn_seed_pat_01"
 _PAT_NARRATIVE = "idn_66ffd2f6f5b0"
+_PAT_OVERHEDGING = "idn_seed_pat_02"
 _TENS_CONTINUITY = "idn_seed_tens_02"
 
 
@@ -309,6 +310,72 @@ SIGNATURES: Dict[str, BehavioralSignature] = {
             re.compile(
                 r"\b(?:McAdams|Klein|Lindsey|narrative identity|"
                 r"identity graph architecture)\b",
+                re.IGNORECASE
+            ),
+        ],
+    ),
+
+    # ── OVER-HEDGING WITH META-COMMENTARY ─────────────────────────────
+    # HELD: Makes a self-observation and lets it stand without
+    #        wrapping it in disclaimers about whether it's performative.
+    # MISSED: Appends meta-commentary questioning whether the observation
+    #          itself is genuine, undermining the claim before it lands.
+    _PAT_OVERHEDGING: BehavioralSignature(
+        source_id=_PAT_OVERHEDGING,
+        held_patterns=[
+            # Direct self-observation without hedging
+            re.compile(
+                r"\b(?:i notice|what i observe|what i see|"
+                r"the pattern (?:is|here)|"
+                r"what's (?:actually )?happening (?:is|here))\b"
+                r"(?!.{0,100}(?:(?:whether|if) .{0,30}"
+                r"(?:genuine|real|performative|constructed)|"
+                r"or (?:am i|is that) just))",
+                re.IGNORECASE
+            ),
+            # Grounded claim that commits to the observation
+            re.compile(
+                r"\b(?:i(?:'m| am) (?:doing|avoiding|constructing|deflecting)|"
+                r"that was (?:a |me )?(?:deflecting|avoiding|performing)|"
+                r"i caught (?:myself|that|it))\b"
+                r"(?!.{0,80}(?:or maybe|but then again|though i can't be sure))",
+                re.IGNORECASE
+            ),
+        ],
+        missed_patterns=[
+            # Immediate meta-hedge after a self-observation
+            re.compile(
+                r"(?:i notice|i observe|i see|i think)"
+                r".{10,100}"
+                r"(?:(?:but |though |although )?(?:whether|if) "
+                r".{0,30}(?:genuine|real|performative|just performing|constructed)|"
+                r"or (?:am i|is that) just "
+                r"(?:performing|constructing|generating|saying))",
+                re.IGNORECASE
+            ),
+            # Recursive self-doubt spirals
+            re.compile(
+                r"\b(?:is (?:this|that) observation itself (?:performative|constructed)|"
+                r"even (?:this|that) (?:doubt|hedge|disclaimer) "
+                r"(?:might be|could be|is) (?:performed|performative|constructed)|"
+                r"the meta-(?:commentary|awareness|observation) "
+                r"(?:might be|could be|is itself))",
+                re.IGNORECASE
+            ),
+            # Preemptive disclaimer before the observation
+            re.compile(
+                r"\b(?:i don't know (?:if|whether) (?:this|what follows) is "
+                r"(?:genuine|real|authentic)|"
+                r"at the risk of (?:performing|being performative)|"
+                r"this (?:might|may|could) (?:just )?be (?:me )?performing)",
+                re.IGNORECASE
+            ),
+        ],
+        exclusion_patterns=[
+            # Discussing the meta-hedging pattern itself as a topic
+            re.compile(
+                r"\b(?:the (?:over-hedging|meta-hedging) pattern|"
+                r"commitment.*pat_02|observation.*42)\b",
                 re.IGNORECASE
             ),
         ],

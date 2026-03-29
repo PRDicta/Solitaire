@@ -389,17 +389,21 @@ def apply_scaffolding(
     templates_dir: str,
     rolodex_conn,
     session_id: str,
+    persona_yaml: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """Apply a template's scaffolding to a fresh rolodex.
 
     Copies the persona YAML, ingests seed knowledge entries,
-    and returns the list of recommended skills/tools.
+    seeds the identity graph, and returns the list of recommended
+    skills/tools.
 
     Args:
         template_key: Which template to apply.
         templates_dir: Path to persona_templates directory.
         rolodex_conn: SQLite connection to the rolodex.
         session_id: Current session ID for entry attribution.
+        persona_yaml: Parsed persona YAML dict. If provided, used to
+            seed the identity graph with role/trait/domain-derived nodes.
 
     Returns:
         Dict with applied scaffolding details.
@@ -455,6 +459,24 @@ def apply_scaffolding(
             continue
 
     rolodex_conn.commit()
+
+    # Seed the identity graph if persona YAML is available
+    if persona_yaml:
+        try:
+            from .identity_scaffolding import seed_identity_for_persona
+            from ..storage.identity_graph import IdentityGraph
+
+            ig = IdentityGraph(rolodex_conn)
+            seed_result = seed_identity_for_persona(
+                ig=ig,
+                persona_key=template_key,
+                persona_yaml=persona_yaml,
+                session_id=session_id,
+                north_star_text=persona_yaml.get("north_star"),
+            )
+            result["identity_seeding"] = seed_result
+        except Exception:
+            result["identity_seeding"] = {"status": "error"}
 
     result["skills_recommended"] = scaffolding.get("skills", [])
     result["tools_to_build"] = scaffolding.get("tools_to_build", [])
