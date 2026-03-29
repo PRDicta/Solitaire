@@ -6,8 +6,8 @@
   <a href="https://github.com/PRDicta/Solitaire-for-Agents/actions/workflows/ci.yml"><img src="https://github.com/PRDicta/Solitaire-for-Agents/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-AGPL--3.0-blue.svg" alt="License"></a>
   <img src="https://img.shields.io/badge/python-3.10%2B-blue.svg" alt="Python 3.10+">
-  <img src="https://img.shields.io/badge/sessions-400%2B-orange.svg" alt="400+ sessions">
-  <img src="https://img.shields.io/badge/entries-13%2C000%2B-orange.svg" alt="13,000+ entries">
+  <img src="https://img.shields.io/badge/sessions-600%2B-orange.svg" alt="600+ sessions">
+  <img src="https://img.shields.io/badge/entries-14%2C000%2B-orange.svg" alt="14,000+ entries">
 </p>
 
 # Solitaire for Agents
@@ -28,8 +28,8 @@ Solitaire gives agents persistent memory, persistent identity, and persistent be
 
 | Metric | Value |
 |--------|-------|
-| Real sessions of longitudinal use | 400+ |
-| Accumulated memory entries | 13,000+ |
+| Real sessions of longitudinal use | 600+ |
+| Accumulated memory entries | 14,000+ |
 | Precision@3 improvement | 80% → 100% |
 | Persona trait alignment | 2.25/5 → 4.43/5 |
 | Dify integration | Shipped |
@@ -41,6 +41,8 @@ Solitaire gives agents persistent memory, persistent identity, and persistent be
 **Identity, not just retrieval.** Most memory tools store facts and retrieve them later. Solitaire also builds a behavioral identity layer: persona compilation, disposition modeling, voice and profile shaping, and session residues that help the agent maintain continuity across time.
 
 **Self-correcting retrieval.** Solitaire tracks which retrieved memories actually prove useful in responses and adjusts weighting over time. Entries that help get surfaced more. Entries that don't fade back. The retrieval system calibrates itself without being told what "right" means.
+
+**Self-healing knowledge graph.** A 13-pass maintenance engine runs during idle time to keep the knowledge graph accurate. It detects contradictions between entries (numeric, preference, negation), recalculates confidence for stale entries, links entities across documents, consolidates identity signals, and generates retrieval biases from cross-session patterns. Contradictions detected at ingestion time are stored for user resolution. The same conflict detection heuristics operate at both ingestion and retrieval, so the system catches inconsistencies on the way in and on the way out.
 
 **Local-first by default.** The memory engine runs locally. Storage stays in SQLite and JSONL inside your workspace. No cloud dependency for the core system. Your data never leaves your machine.
 
@@ -133,7 +135,7 @@ Solitaire is for developers who want agents to feel continuous across time.
 
 | Platform | Integration | Status |
 |----------|------------|--------|
-| **Claude Code** | CLAUDE.md + bash subprocess + hooks | **Recommended** (400+ sessions) |
+| **Claude Code** | CLAUDE.md + bash subprocess + hooks | **Recommended** (600+ sessions) |
 | Cowork | CLAUDE.md + bash subprocess | Compatible |
 | Hermes | SKILL.md (native format) | Compatible |
 | OpenClaw | SKILL.md (native format) | Compatible |
@@ -204,15 +206,22 @@ Host Agent (Claude, Gemini, custom LLM, etc.)
   Core Domain              Retrieval Layer
   - Persona & identity     - Vector + keyword search
   - Session management     - Query expansion
-  - Self-learning stack    - Reranking
-  - Intent routing         - Evaluation gate
+  - Self-learning stack    - 7-signal reranking
+  - Intent routing         - Contradiction post-filter
   - Pattern detection      - Context builder
     │                               │
-  Indexing Layer            Storage Layer
-  - Ingestion queue        - SQLite knowledge graph
-  - Entity extraction      - Identity graph
-  - Topic routing          - JSONL turn archives
-  - Embedding generation   - Session state
+  Indexing Layer            Maintenance Layer
+  - Ingestion queue        - 13-pass hygiene engine
+  - Entity extraction      - Confidence rescoring
+  - Contradiction detect.  - Entity relinking
+  - Provenance assignment  - Identity consolidation
+  - Embedding generation   - Retrieval bias generation
+    │                               │
+  Storage Layer
+  - SQLite knowledge graph
+  - Identity graph
+  - JSONL turn archives
+  - Session state
 ```
 
 ## What's stored locally

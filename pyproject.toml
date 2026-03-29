@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "solitaire"
 version = "1.4.0"
-description = "Persistent memory, self-correcting retrieval, and evolving identity for AI agents. Local-first, model-agnostic."
+description = "Persistent memory, self-healing knowledge graph, and evolving identity for AI agents. Local-first, model-agnostic."
 readme = "README.md"
 license = {text = "AGPL-3.0-or-later"}
 requires-python = ">=3.10"
@@ -14,7 +14,7 @@ authors = [
 ]
 keywords = ["ai", "memory", "agents", "identity", "persistent-memory"]
 classifiers = [
-    "Development Status :: 3 - Alpha",
+    "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
     "License :: OSI Approved :: GNU Affero General Public License v3 or later (AGPLv3+)",
     "Programming Language :: Python :: 3",
