@@ -106,9 +106,13 @@ def build_briefing_block(
     # Step 4: Detect open threads
     open_threads = _detect_open_threads(conn, digests)
 
+    # Step 4b: Load pending contradictions
+    contradiction_alerts = _load_contradiction_alerts(conn)
+
     # Step 5: Assemble the briefing
     block = _assemble_briefing(
-        digests, work_streams, open_threads, budget_tokens
+        digests, work_streams, open_threads, budget_tokens,
+        contradiction_alerts=contradiction_alerts,
     )
 
     return BriefingResult(
@@ -398,6 +402,25 @@ def _extract_thread_sentence(content: str) -> Optional[str]:
     return best
 
 
+# ─── Contradiction Alert Loading ────────────────────────────────────────────
+
+def _load_contradiction_alerts(conn: sqlite3.Connection) -> List[str]:
+    """Load pending contradictions for briefing display."""
+    try:
+        rows = conn.execute(
+            """
+            SELECT pc.description
+            FROM pending_contradictions pc
+            WHERE pc.resolved_at IS NULL
+            ORDER BY pc.detected_at DESC
+            LIMIT 3
+            """
+        ).fetchall()
+        return [row[0] for row in rows]
+    except Exception:
+        return []
+
+
 # ─── Briefing Assembly ───────────────────────────────────────────────────────
 
 def _assemble_briefing(
@@ -405,6 +428,7 @@ def _assemble_briefing(
     work_streams: List[WorkStream],
     open_threads: List[str],
     budget_tokens: int,
+    contradiction_alerts: Optional[List[str]] = None,
 ) -> str:
     """Assemble the final briefing block within token budget."""
     parts = ["═══ SITUATIONAL BRIEFING ═══", ""]
@@ -436,6 +460,13 @@ def _assemble_briefing(
             parts.append(f"- {thread[:150]}")
         parts.append("")
 
+    # Section 4: Contradiction alerts
+    if contradiction_alerts:
+        parts.append("Pending contradictions (needs resolution):")
+        for alert in contradiction_alerts[:3]:
+            parts.append(f"- {alert[:200]}")
+        parts.append("")
+
     parts.append("═══ END BRIEFING ═══")
 
     block = "\n".join(parts)
@@ -443,13 +474,15 @@ def _assemble_briefing(
     # Trim if over budget
     tokens = estimate_tokens(block)
     if tokens > budget_tokens:
-        # Progressively trim: open threads first, then sessions, then streams
+        # Progressively trim: contradiction alerts first, then open threads, sessions, streams
+        if contradiction_alerts and len(contradiction_alerts) > 1:
+            return _assemble_briefing(digests, work_streams, open_threads, budget_tokens, contradiction_alerts[:1])
         if open_threads:
-            return _assemble_briefing(digests, work_streams, open_threads[:1], budget_tokens)
+            return _assemble_briefing(digests, work_streams, open_threads[:1], budget_tokens, [])
         if len(digests) > 2:
-            return _assemble_briefing(digests[:2], work_streams, [], budget_tokens)
+            return _assemble_briefing(digests[:2], work_streams, [], budget_tokens, [])
         if len(work_streams) > 2:
-            return _assemble_briefing(digests, work_streams[:2], [], budget_tokens)
+            return _assemble_briefing(digests, work_streams[:2], [], budget_tokens, [])
         # Last resort: hard truncate
         target_chars = budget_tokens * 4
         block = block[:target_chars] + "\n\n═══ END BRIEFING ═══"

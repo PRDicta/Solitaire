@@ -11,26 +11,43 @@ Scoring signals:
 3. Category match (from intent detection — biases toward relevant categories)
 4. Recency (newer entries get a mild boost)
 5. Access frequency (well-worn book principle — frequently accessed entries rank higher)
+6. Confidence (Hindsight reinforcement — reinforced entries rank higher)
+7. Identity resonance (entries touching active identity nodes rank higher)
+
+Post-filters:
+- Contradiction resolution (Phase 2): when two scored entries share entity
+  overlap but contain conflicting claims, the older one is suppressed.
+  This prevents stale facts from surviving retrieval when a newer correction
+  exists in the same result set.
 
 No LLM calls — purely heuristic, runs in microseconds.
 """
 import time
+import re
 from typing import List, Tuple, Optional, Set
 from dataclasses import dataclass, field
 from ..core.types import RolodexEntry
 from .entity_extractor import EntityExtractor, ExtractedEntities
 from ..core.confidence import extract_confidence_from_metadata, compute_effective
+from .conflict_utils import (
+    extract_claim_entities,
+    detect_claim_conflict,
+    numeric_conflict,
+    preference_conflict,
+    negation_conflict,
+)
 
 
 @dataclass
 class RerankerConfig:
     """Weights for each scoring signal. All should sum to ~1.0 for interpretability."""
-    semantic_weight: float = 0.30
+    semantic_weight: float = 0.275
     entity_weight: float = 0.25
-    category_weight: float = 0.15
+    category_weight: float = 0.125
     recency_weight: float = 0.10
     frequency_weight: float = 0.10
     confidence_weight: float = 0.10  # Hindsight: reinforced entries rank higher
+    identity_weight: float = 0.05   # Identity resonance: entries touching active identity nodes
 
     # Verbatim boost: additive bonus applied to entries with verbatim_source=True.
     # Ensures original user/assistant text is preferred over assistant summaries,
@@ -39,9 +56,21 @@ class RerankerConfig:
     # score distortion.
     verbatim_boost: float = 0.15
 
-    # Provenance boost: user-stated content ranks higher than assistant-inferred.
-    # The user's own words are more authoritative than the assistant's interpretation.
-    user_stated_boost: float = 0.10
+    # Provenance boost: graduated by source authority.
+    # user-stated content is the user's own words (highest trust).
+    # inferred content gets slight skepticism (enrichment pipeline output).
+    # Legacy field user_stated_boost kept for backward compat but unused in scoring.
+    user_stated_boost: float = 0.10  # Deprecated: use provenance_boosts
+
+    provenance_boosts: dict = field(default_factory=lambda: {
+        "user-stated": 0.10,       # User's own words
+        "system": 0.07,            # System-level entries
+        "external-import": 0.03,   # Imported, not verified in-session
+        "assistant-inferred": 0.02,
+        "observed": 0.01,          # Observer/scanner patterns
+        "inferred": -0.02,         # Enrichment pipeline, slight skepticism
+        "unknown": 0.0,            # Unclassified, no boost
+    })
 
     # Recency decay: entries older than this many days get no recency boost
     recency_horizon_days: float = 30.0
@@ -80,6 +109,7 @@ class ScoredCandidate:
     recency_score: float = 0.0
     frequency_score: float = 0.0
     confidence_score: float = 0.0  # Hindsight: entry confidence (0-1)
+    identity_resonance_score: float = 0.0  # Identity: overlap with active identity nodes
 
 
 class Reranker:
@@ -101,6 +131,7 @@ class Reranker:
         limit: int = 5,
         fresh_mode: bool = False,
         query_intent: Optional[str] = None,
+        identity_context: Optional[dict] = None,
     ) -> List[ScoredCandidate]:
         """
         Re-rank a pool of candidates using multiple signals.
@@ -113,6 +144,9 @@ class Reranker:
             limit: Number of results to return
             query_intent: Intent type from QueryExpander (factual, retrospective,
                          experiential, exploratory). Used to scale recency weight.
+            identity_context: Optional dict with active identity nodes for resonance
+                             scoring. Keys: growth_edges, commitments, patterns, north_star.
+                             Each value is a list of identity node objects (or None).
 
         Returns:
             Top N entries re-ranked by composite score
@@ -141,6 +175,7 @@ class Reranker:
                 recency_weight=0.40,
                 frequency_weight=0.05,
                 confidence_weight=0.05,  # Reduced in fresh mode (recency dominates)
+                identity_weight=0.03,    # Reduced in fresh mode
                 verbatim_boost=cfg.verbatim_boost,
                 user_stated_boost=cfg.user_stated_boost,
                 recency_horizon_days=2.0,  # Was cfg.recency_horizon_days (30d). Tightened for fresh mode.
@@ -177,6 +212,7 @@ class Reranker:
                     recency_weight=adjusted_recency,
                     frequency_weight=cfg.frequency_weight,
                     confidence_weight=cfg.confidence_weight,
+                    identity_weight=cfg.identity_weight,
                     verbatim_boost=cfg.verbatim_boost,
                     user_stated_boost=cfg.user_stated_boost,
                     recency_horizon_days=cfg.recency_horizon_days,
@@ -224,6 +260,11 @@ class Reranker:
             # Signal 6: Confidence (Hindsight)
             sc.confidence_score = self._score_confidence(entry)
 
+            # Signal 7: Identity resonance
+            sc.identity_resonance_score = self._score_identity_resonance(
+                entry, identity_context
+            )
+
             # Composite score
             sc.composite_score = (
                 cfg.semantic_weight * sc.semantic_score
@@ -232,20 +273,26 @@ class Reranker:
                 + cfg.recency_weight * sc.recency_score
                 + cfg.frequency_weight * sc.frequency_score
                 + cfg.confidence_weight * sc.confidence_score
+                + cfg.identity_weight * sc.identity_resonance_score
             )
 
             # Verbatim boost: original text preferred over summaries (additive)
             if getattr(entry, "verbatim_source", True):
                 sc.composite_score += cfg.verbatim_boost
 
-            # Provenance boost: user-stated content ranks higher
-            if getattr(entry, "provenance", "unknown") == "user-stated":
-                sc.composite_score += cfg.user_stated_boost
+            # Provenance boost: graduated by source authority
+            provenance = getattr(entry, "provenance", "unknown")
+            sc.composite_score += cfg.provenance_boosts.get(provenance, 0.0)
 
             scored.append(sc)
 
         # Sort by composite score descending
         scored.sort(key=lambda s: s.composite_score, reverse=True)
+
+        # Phase 2: Contradiction resolution post-filter.
+        # Scan the top results for entry pairs that share entity overlap
+        # but contain conflicting claims. When found, suppress the older one.
+        scored = self._resolve_contradictions(scored, limit)
 
         return scored[:limit]
 
@@ -385,6 +432,107 @@ class Reranker:
 
         return score.effective
 
+    def _score_identity_resonance(
+        self,
+        entry: RolodexEntry,
+        identity_context: Optional[dict],
+    ) -> float:
+        """
+        Score how much an entry resonates with the agent's active identity.
+
+        Checks whether the entry's content overlaps with keywords from active
+        identity nodes (growth edges, commitments, patterns, north star).
+        Entries that touch active identity content are more personally
+        meaningful and should rank higher.
+
+        Returns 0.0-1.0 where:
+          1.0 = strong overlap with growth edges or commitments (highest priority)
+          0.7 = overlaps with active behavioral patterns
+          0.5 = touches north star themes
+          0.0 = no identity relevance (neutral, not penalized)
+        """
+        if not identity_context:
+            return 0.0
+
+        content_lower = (entry.content or "").lower()
+        tags_lower = " ".join(entry.tags).lower() if entry.tags else ""
+        search_text = content_lower + " " + tags_lower
+
+        if len(search_text.strip()) < 10:
+            return 0.0
+
+        best_score = 0.0
+
+        # Growth edges and commitments: highest identity relevance
+        for node_list_key in ("growth_edges", "commitments"):
+            nodes = identity_context.get(node_list_key)
+            if not nodes:
+                continue
+            for node in nodes:
+                node_content = getattr(node, "content", "") or ""
+                if not node_content:
+                    continue
+                keywords = self._extract_identity_keywords(node_content)
+                if keywords and self._keyword_overlap(keywords, search_text):
+                    best_score = max(best_score, 1.0)
+
+        if best_score >= 1.0:
+            return 1.0
+
+        # Patterns: behavioral relevance
+        patterns = identity_context.get("patterns")
+        if patterns:
+            for node in patterns:
+                node_content = getattr(node, "content", "") or ""
+                if not node_content:
+                    continue
+                keywords = self._extract_identity_keywords(node_content)
+                if keywords and self._keyword_overlap(keywords, search_text):
+                    best_score = max(best_score, 0.7)
+
+        if best_score >= 0.7:
+            return best_score
+
+        # North star: thematic relevance
+        north_star = identity_context.get("north_star")
+        if north_star:
+            ns_content = getattr(north_star, "content", "") or ""
+            if ns_content:
+                keywords = self._extract_identity_keywords(ns_content)
+                if keywords and self._keyword_overlap(keywords, search_text):
+                    best_score = max(best_score, 0.5)
+
+        return best_score
+
+    @staticmethod
+    def _extract_identity_keywords(text: str) -> Set[str]:
+        """Extract significant keywords from an identity node's content."""
+        _stop = {
+            'the', 'a', 'an', 'is', 'are', 'was', 'were', 'what', 'who', 'how',
+            'when', 'where', 'why', 'do', 'does', 'did', 'my', 'your', 'our',
+            'this', 'that', 'it', 'i', 'me', 'we', 'us', 'to', 'of', 'in', 'for',
+            'on', 'with', 'at', 'by', 'from', 'and', 'or', 'but', 'not', 'can',
+            'will', 'would', 'could', 'should', 'has', 'have', 'had', 'be', 'been',
+            'being', 'about', 'into', 'through', 'during', 'before', 'after',
+            'also', 'just', 'very', 'really', 'than', 'then', 'some', 'only',
+            'its', 'they', 'them', 'their', 'which', 'these', 'those', 'other',
+            'more', 'most', 'such', 'each', 'every', 'both', 'between',
+            'practice', 'status', 'active', 'identified', 'practicing',
+            'not', 'instead', 'rather', 'whether',
+        }
+        words = set(re.findall(r'\b[a-z]{4,}\b', text.lower()))
+        return words - _stop
+
+    @staticmethod
+    def _keyword_overlap(keywords: Set[str], search_text: str) -> bool:
+        """Check if enough identity keywords appear in the entry text."""
+        if not keywords:
+            return False
+        hits = sum(1 for kw in keywords if kw in search_text)
+        # Require at least 2 keyword hits, or 1 if the keyword set is small
+        threshold = 2 if len(keywords) >= 4 else 1
+        return hits >= threshold
+
     def _score_frequency(self, entry: RolodexEntry) -> float:
         """
         Score based on access frequency (the well-worn book principle).
@@ -413,3 +561,93 @@ class Reranker:
             return 0.0
 
         return min(access_count / self.config.frequency_cap, 1.0)
+
+    # ─── Phase 2: Contradiction Resolution ──────────────────────────────────
+
+    def _resolve_contradictions(
+        self,
+        scored: List[ScoredCandidate],
+        limit: int,
+    ) -> List[ScoredCandidate]:
+        """
+        Post-filter: detect and resolve contradictions in scored results.
+
+        When two entries share significant entity overlap but contain
+        conflicting claims (numeric values, status assertions, or negation
+        patterns), suppress the older one. "Suppress" means removing it
+        from the result set entirely, not just demoting its score. A
+        contradicted entry is wrong, not just less relevant.
+
+        Only scans the top `limit * 2` entries to keep this fast. Pairwise
+        comparison is O(n^2) but n is capped at ~16, so it's negligible.
+
+        Returns the filtered list (may be shorter than input).
+        """
+        # Only worth checking if we have at least 2 results
+        if len(scored) < 2:
+            return scored
+
+        # Scan window: check more than `limit` entries so we can backfill
+        # if a suppressed entry was in the top N
+        scan_window = min(len(scored), limit * 2)
+        scan_set = scored[:scan_window]
+
+        # Build per-entry entity sets for pairwise comparison
+        entry_entities: List[Set[str]] = []
+        for sc in scan_set:
+            entities = self._extract_claim_entities(sc.entry)
+            entry_entities.append(entities)
+
+        suppressed_ids: Set[str] = set()
+
+        for i in range(len(scan_set)):
+            if scan_set[i].entry.id in suppressed_ids:
+                continue
+            for j in range(i + 1, len(scan_set)):
+                if scan_set[j].entry.id in suppressed_ids:
+                    continue
+
+                # Check entity overlap: need shared context to compare claims
+                overlap = entry_entities[i] & entry_entities[j]
+                if len(overlap) < 1:
+                    continue
+
+                # Check for conflicting claims
+                conflict = self._detect_claim_conflict(
+                    scan_set[i].entry, scan_set[j].entry
+                )
+                if not conflict:
+                    continue
+
+                # Conflict found: suppress the older entry
+                entry_i = scan_set[i].entry
+                entry_j = scan_set[j].entry
+                older_idx = i if self._entry_is_older(entry_i, entry_j) else j
+                suppressed_ids.add(scan_set[older_idx].entry.id)
+
+        if not suppressed_ids:
+            return scored
+
+        return [sc for sc in scored if sc.entry.id not in suppressed_ids]
+
+    @staticmethod
+    def _extract_claim_entities(entry: RolodexEntry) -> Set[str]:
+        """Delegate to shared conflict_utils."""
+        return extract_claim_entities(entry.content or "", entry.tags)
+
+    @staticmethod
+    def _detect_claim_conflict(entry_a: RolodexEntry, entry_b: RolodexEntry) -> bool:
+        """Delegate to shared conflict_utils. Returns True if conflict detected."""
+        return detect_claim_conflict(
+            entry_a.content or "", entry_b.content or ""
+        ) is not None
+
+    @staticmethod
+    def _entry_is_older(a: RolodexEntry, b: RolodexEntry) -> bool:
+        """Return True if entry a is older than entry b."""
+        try:
+            time_a = a.created_at.timestamp() if hasattr(a.created_at, 'timestamp') else float(a.created_at)
+            time_b = b.created_at.timestamp() if hasattr(b.created_at, 'timestamp') else float(b.created_at)
+            return time_a < time_b
+        except (TypeError, ValueError, AttributeError):
+            return False  # Can't determine; don't suppress either

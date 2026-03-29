@@ -61,6 +61,8 @@ class EntryExtractor:
             if not content or len(content.strip()) < 20:
                 continue
 
+            role = msg.get("role", "unknown")
+
             # Chunk the message content
             chunks = self.chunker.chunk_conversation_turn(content)
 
@@ -76,7 +78,7 @@ class EntryExtractor:
                 # Convert to RolodexEntry objects with embeddings
                 for raw in raw_entries:
                     entry = await self._build_entry(
-                        raw, modality, conversation_id, turn_number
+                        raw, modality, conversation_id, turn_number, role
                     )
                     if entry:
                         all_entries.append(entry)
@@ -89,6 +91,7 @@ class EntryExtractor:
         modality: ContentModality,
         conversation_id: str,
         turn_number: int,
+        role: str = "unknown",
     ) -> Optional[RolodexEntry]:
         """Convert a raw extraction dict into a full RolodexEntry."""
         content = raw.get("content", "").strip()
@@ -111,6 +114,14 @@ class EntryExtractor:
         # Generate embedding
         embedding = await self.embeddings.embed_text(content)
 
+        # Derive provenance from role
+        _ROLE_TO_PROVENANCE = {
+            "user": "user-stated",
+            "assistant": "assistant-inferred",
+            "system": "system",
+        }
+        provenance = _ROLE_TO_PROVENANCE.get(role, "unknown")
+
         return RolodexEntry(
             id=str(uuid.uuid4()),
             conversation_id=conversation_id,
@@ -124,4 +135,5 @@ class EntryExtractor:
             embedding=embedding,
             linked_ids=[],
             tier=Tier.COLD,
+            provenance=provenance,
         )

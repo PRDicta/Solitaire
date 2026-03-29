@@ -309,3 +309,4 @@ This is not optional. Run the check. Fix violations before sending.
 | Health check | `solitaire pulse` |
 | Onboard | `solitaire onboard create` |
 | Onboard step | `solitaire onboard flow-step <id> "<input>"` |
+| Maintain | `solitaire maintain run` |

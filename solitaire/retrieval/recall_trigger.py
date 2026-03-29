@@ -43,6 +43,12 @@ class TriggerResult:
     temporal_only: bool = False  # True if this is a pure temporal query (bypass FTS, use session digests)
     matched_topics: List[Tuple[str, int, float]] = field(default_factory=list)    # (label, entry_count, confidence)
     matched_projects: List[Tuple[str, float]] = field(default_factory=list)       # (name, confidence)
+    # Phase 2: Contradiction risk. True when detected entities have known state
+    # transitions in entity_timeline, meaning retrieval may surface conflicting
+    # entries about the same subject. Signals the reranker to apply stricter
+    # contradiction resolution.
+    contradiction_risk: bool = False
+    contradiction_entities: List[str] = field(default_factory=list)  # entities with timeline transitions
 
 
 # ─── Back-Reference Patterns ────────────────────────────────────────────────
@@ -236,9 +242,19 @@ class RecallTrigger:
         self._topic_cache.load(conn)
         self._project_cache.load(conn)
 
-    def analyze(self, message: str) -> TriggerResult:
+    def analyze(
+        self,
+        message: str,
+        identity_context: Optional[Dict] = None,
+    ) -> TriggerResult:
         """
         Analyze a user message and generate recall queries.
+
+        Args:
+            message: The user's message to analyze.
+            identity_context: Optional dict with active identity nodes. Keys:
+                growth_edges, commitments, patterns, north_star. Used to inject
+                identity-resonant queries when the message touches identity topics.
 
         Returns TriggerResult with prioritized queries and signal metadata.
         """
@@ -381,6 +397,25 @@ class RecallTrigger:
                     signal="content_key_words",
                 ))
 
+        # ── Signal 6: Identity resonance ────────────────────────────────
+        # If the message touches active identity topics (growth edges,
+        # commitments, patterns), inject a query to surface related entries.
+        # Capped at 1 identity query to avoid flooding the pipeline.
+        if identity_context:
+            identity_query = self._detect_identity_resonance(
+                message, identity_context
+            )
+            if identity_query:
+                result.signals_detected.append("identity_resonance")
+                result.queries.append(identity_query)
+
+        # ── Signal 7: Contradiction risk (Phase 2) ──────────────────────
+        # Check if any detected entities have state transitions in the
+        # entity_timeline table. If so, retrieval may surface conflicting
+        # entries about the same subject. Flag this so the reranker applies
+        # stricter contradiction resolution.
+        self._check_contradiction_risk(result)
+
         # ── Dedup and sort ───────────────────────────────────────────────
         result.queries = self._dedup_queries(result.queries)
         result.queries.sort(key=lambda q: q.priority, reverse=True)
@@ -420,6 +455,121 @@ class RecallTrigger:
         # Return first 4 meaningful words
         words = context.split()[:4]
         return ' '.join(words) if words else ''
+
+    def _detect_identity_resonance(
+        self,
+        message: str,
+        identity_context: Dict,
+    ) -> Optional[RecallQuery]:
+        """
+        Check if the user's message overlaps with active identity node content.
+        If so, generate a recall query to surface identity-relevant entries.
+
+        Returns at most one RecallQuery (or None if no resonance detected).
+        """
+        message_lower = message.lower()
+        message_words = set(re.findall(r'\b[a-z]{4,}\b', message_lower))
+
+        if len(message_words) < 2:
+            return None
+
+        # Check each identity category in priority order
+        for node_list_key, priority in [
+            ("growth_edges", 0.6),
+            ("commitments", 0.6),
+            ("patterns", 0.5),
+        ]:
+            nodes = identity_context.get(node_list_key)
+            if not nodes:
+                continue
+            for node in nodes:
+                node_content = getattr(node, "content", "") or ""
+                if not node_content:
+                    continue
+                node_words = set(re.findall(r'\b[a-z]{4,}\b', node_content.lower()))
+                # Filter out common stop words
+                _stop = {
+                    'the', 'this', 'that', 'with', 'from', 'have', 'been',
+                    'being', 'about', 'into', 'through', 'during', 'also',
+                    'just', 'very', 'really', 'than', 'then', 'some', 'only',
+                    'practice', 'status', 'active', 'identified', 'practicing',
+                    'instead', 'rather', 'whether', 'when', 'where', 'what',
+                    'does', 'will', 'would', 'could', 'should',
+                }
+                node_words -= _stop
+                if len(node_words) < 3:
+                    continue
+
+                overlap = message_words & node_words
+                if len(overlap) >= 2:
+                    # Build query from the overlapping + node-specific terms
+                    query_terms = list(overlap)[:3]
+                    # Add 1-2 node-specific terms for context
+                    extra = list(node_words - overlap)[:2]
+                    query_terms.extend(extra)
+                    return RecallQuery(
+                        query=" ".join(query_terms),
+                        priority=priority,
+                        signal="identity_resonance",
+                    )
+
+        return None
+
+    def _check_contradiction_risk(self, result: TriggerResult) -> None:
+        """
+        Check if detected entities have state transitions in entity_timeline.
+
+        If an entity has been through status_change or updated events, there
+        may be conflicting entries about its current state in the rolodex.
+        Sets result.contradiction_risk = True and populates
+        result.contradiction_entities with the entity names.
+
+        Fails silently if entity_timeline table doesn't exist (pre-temporal
+        reasoning databases).
+        """
+        if not result.entities:
+            return
+
+        # Collect all entity names to check
+        entity_names = set()
+        if result.entities.proper_nouns:
+            entity_names.update(result.entities.proper_nouns)
+        if result.entities.technical_terms:
+            entity_names.update(result.entities.technical_terms)
+
+        if not entity_names:
+            return
+
+        try:
+            # Check if entity_timeline table exists
+            table_check = self.conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name='entity_timeline'"
+            ).fetchone()
+            if not table_check:
+                return
+
+            # Look for entities with state transitions
+            risky_entities = []
+            for name in entity_names:
+                row = self.conn.execute(
+                    """SELECT COUNT(*) FROM entity_timeline
+                       WHERE entity_name_lower = ?
+                       AND event_type IN ('status_change', 'updated', 'decision')""",
+                    (name.lower(),)
+                ).fetchone()
+                if row and row[0] > 0:
+                    risky_entities.append(name)
+
+            if risky_entities:
+                result.contradiction_risk = True
+                result.contradiction_entities = risky_entities
+                result.signals_detected.append("contradiction_risk")
+
+        except Exception:
+            # entity_timeline may not exist yet or may have schema differences.
+            # Fail silently; contradiction detection in the reranker still works
+            # without this signal (it just won't be as targeted).
+            pass
 
     def _dedup_queries(self, queries: List[RecallQuery]) -> List[RecallQuery]:
         """Remove near-duplicate queries, keeping the highest priority."""

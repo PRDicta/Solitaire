@@ -22,7 +22,7 @@ import sqlite3
 import time
 import uuid
 from collections import defaultdict
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
 from .types import EntryCategory, CompressionStage, RolodexEntry, Tier, estimate_tokens
@@ -195,6 +195,10 @@ class MaintenanceEngine:
         self.behavioral_consolidated = 0
         self.uk_tier_changes = 0
         self.confidence_decayed = 0
+        self.entries_rescored = 0
+        self.entities_linked = 0
+        self.identity_flags = 0
+        self.biases_managed = 0
         self.entries_scanned = 0
         self.actions: List[Dict[str, Any]] = []
         self.passes_run: List[str] = []
@@ -1358,6 +1362,447 @@ class MaintenanceEngine:
         self.confidence_decayed = updated
         return updated
 
+    # ─── Phase 5: Cognitive Consolidation Passes ─────────────────────────
+
+    def pass_rescoring(self) -> int:
+        """
+        Pass 10: Significance recalculation for stale entries.
+
+        Recalculates confidence for entries not accessed in 14+ days using
+        the full confidence pipeline (not just decay). Flags entries that
+        dropped below 0.3 significance for review.
+        """
+        from .confidence import (
+            extract_confidence_from_metadata,
+            apply_decay,
+            merge_confidence_into_metadata,
+            initial_confidence,
+        )
+
+        now = datetime.now(timezone.utc)
+        cutoff = (now - timedelta(days=14)).isoformat()
+        updated = 0
+
+        rows = self.conn.execute(
+            """SELECT id, metadata, category, provenance, access_count, last_accessed
+               FROM rolodex_entries
+               WHERE archived_at IS NULL
+                 AND (last_accessed IS NULL OR last_accessed < ?)
+               ORDER BY last_accessed ASC NULLS FIRST
+               LIMIT ?""",
+            (cutoff, self.max_entries_per_pass),
+        ).fetchall()
+
+        for row in rows:
+            if self._budget_remaining() <= 0:
+                break
+
+            entry_id = row[0]
+            metadata = json.loads(row[1] or "{}")
+            category = row[2] or "note"
+            provenance = row[3] or "unknown"
+            access_count = row[4] or 0
+
+            self.entries_scanned += 1
+
+            score = extract_confidence_from_metadata(metadata)
+            if score is None:
+                # Entry has no confidence data yet; initialize it
+                score = initial_confidence(provenance, category)
+
+            # Calculate days since last reinforcement
+            if score.last_reinforced_at:
+                try:
+                    last_dt = datetime.fromisoformat(
+                        score.last_reinforced_at.replace('Z', '+00:00')
+                    )
+                    days_elapsed = (now - last_dt).total_seconds() / 86400.0
+                except (ValueError, TypeError):
+                    days_elapsed = 14.0
+            else:
+                days_elapsed = 14.0
+
+            new_score = apply_decay(score, days_elapsed, category, provenance)
+
+            # Check if score dropped significantly
+            delta = abs(new_score.effective - score.effective)
+            if delta < 0.01:
+                continue
+
+            metadata = merge_confidence_into_metadata(metadata, new_score)
+
+            # Flag low-significance entries
+            if new_score.effective < 0.3:
+                metadata["low_significance_flag"] = True
+                self.actions.append({
+                    "type": "low_significance_flagged",
+                    "entry_id": entry_id,
+                    "effective": new_score.effective,
+                })
+
+            self.conn.execute(
+                "UPDATE rolodex_entries SET metadata = ? WHERE id = ?",
+                (json.dumps(metadata), entry_id),
+            )
+            updated += 1
+
+        self.entries_rescored = updated
+        self.passes_run.append("rescoring")
+        return updated
+
+    def pass_entity_relinking(self) -> int:
+        """
+        Pass 11: Broader entity matching for recent entries.
+
+        Populates linked_ids for entries ingested in the last 7 days that
+        have empty linked_ids. Uses entity extraction + knowledge graph
+        matching with more compute budget than real-time ingestion allows.
+        """
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=7)).isoformat()
+        linked = 0
+
+        rows = self.conn.execute(
+            """SELECT id, content, tags
+               FROM rolodex_entries
+               WHERE archived_at IS NULL
+                 AND created_at >= ?
+                 AND (linked_ids IS NULL OR linked_ids = '[]')
+               LIMIT ?""",
+            (cutoff, self.max_entries_per_pass),
+        ).fetchall()
+
+        if not rows:
+            self.passes_run.append("entity_relinking")
+            return 0
+
+        # Check if entity_nodes table exists
+        try:
+            self.conn.execute("SELECT 1 FROM entity_nodes LIMIT 1")
+        except sqlite3.OperationalError:
+            self.passes_run.append("entity_relinking")
+            return 0
+
+        # Load known entities for matching
+        known_entities = {}
+        try:
+            entity_rows = self.conn.execute(
+                "SELECT id, name FROM entity_nodes"
+            ).fetchall()
+            known_entities = {r[1].lower(): r[0] for r in entity_rows}
+        except Exception:
+            self.passes_run.append("entity_relinking")
+            return 0
+
+        if not known_entities:
+            self.passes_run.append("entity_relinking")
+            return 0
+
+        import re
+        for row in rows:
+            if self._budget_remaining() <= 0:
+                break
+
+            entry_id, content, tags_json = row[0], row[1], row[2]
+            self.entries_scanned += 1
+
+            # Simple entity matching: find known entity names in content
+            content_lower = (content or "").lower()
+            matched_ids = []
+            for name_lower, entity_id in known_entities.items():
+                if len(name_lower) >= 3 and name_lower in content_lower:
+                    matched_ids.append(entity_id)
+
+            if matched_ids:
+                self.conn.execute(
+                    "UPDATE rolodex_entries SET linked_ids = ? WHERE id = ?",
+                    (json.dumps(matched_ids[:10]), entry_id),  # Cap at 10 links
+                )
+                self.actions.append({
+                    "type": "entity_linked",
+                    "entry_id": entry_id,
+                    "links_added": len(matched_ids[:10]),
+                })
+                linked += 1
+
+        self.entities_linked = linked
+        self.passes_run.append("entity_relinking")
+        return linked
+
+    def pass_identity_consolidation(self) -> int:
+        """
+        Pass 12: Identity signal accumulation review.
+
+        Reviews identity nodes to identify:
+        - Patterns with 3+ signals not yet promoted to full nodes
+        - Commitments with 0 signals for 5+ sessions (stale)
+        - Growth edges with consistent 'held' signals ready for advancement
+        """
+        flagged = 0
+
+        # Check if identity tables exist
+        try:
+            self.conn.execute("SELECT 1 FROM identity_nodes LIMIT 1")
+            self.conn.execute("SELECT 1 FROM identity_signals LIMIT 1")
+        except sqlite3.OperationalError:
+            self.passes_run.append("identity_consolidation")
+            return 0
+
+        # Get recent session IDs (last 5)
+        try:
+            session_rows = self.conn.execute(
+                """SELECT DISTINCT session_id FROM identity_signals
+                   ORDER BY created_at DESC LIMIT 50"""
+            ).fetchall()
+            recent_sessions = list(dict.fromkeys(r[0] for r in session_rows))[:5]
+        except Exception:
+            recent_sessions = []
+
+        if not recent_sessions:
+            self.passes_run.append("identity_consolidation")
+            return 0
+
+        # 1. Find commitments with 0 signals in recent sessions (stale candidates)
+        commitment_rows = self.conn.execute(
+            """SELECT id, content, status FROM identity_nodes
+               WHERE node_type = 'commitment' AND status = 'active'"""
+        ).fetchall()
+
+        for c_id, c_content, c_status in commitment_rows:
+            signal_count = self.conn.execute(
+                """SELECT COUNT(*) FROM identity_signals
+                   WHERE commitment_id = ? AND session_id IN ({})""".format(
+                    ",".join("?" * len(recent_sessions))
+                ),
+                (c_id, *recent_sessions),
+            ).fetchone()[0]
+
+            if signal_count == 0:
+                # Flag as stale candidate
+                self.conn.execute(
+                    """UPDATE identity_nodes
+                       SET metadata = json_set(COALESCE(metadata, '{}'), '$.stale_candidate', 1)
+                       WHERE id = ?""",
+                    (c_id,),
+                )
+                self.actions.append({
+                    "type": "stale_commitment_flagged",
+                    "node_id": c_id,
+                    "content": c_content[:100],
+                    "sessions_checked": len(recent_sessions),
+                })
+                flagged += 1
+
+        # 2. Find growth edges with consistent 'held' signals
+        ge_rows = self.conn.execute(
+            """SELECT id, content, status FROM identity_nodes
+               WHERE node_type = 'growth_edge' AND status IN ('identified', 'practicing')"""
+        ).fetchall()
+
+        for ge_id, ge_content, ge_status in ge_rows:
+            held = self.conn.execute(
+                """SELECT COUNT(*) FROM identity_signals
+                   WHERE commitment_id = ? AND signal_type = 'held'
+                     AND session_id IN ({})""".format(
+                    ",".join("?" * len(recent_sessions))
+                ),
+                (ge_id, *recent_sessions),
+            ).fetchone()[0]
+
+            missed = self.conn.execute(
+                """SELECT COUNT(*) FROM identity_signals
+                   WHERE commitment_id = ? AND signal_type = 'missed'
+                     AND session_id IN ({})""".format(
+                    ",".join("?" * len(recent_sessions))
+                ),
+                (ge_id, *recent_sessions),
+            ).fetchone()[0]
+
+            if held >= 3 and missed == 0:
+                self.actions.append({
+                    "type": "growth_edge_advancement_candidate",
+                    "node_id": ge_id,
+                    "content": ge_content[:100],
+                    "held_count": held,
+                    "current_status": ge_status,
+                })
+                flagged += 1
+
+        # 3. Find patterns with accumulated signals not yet full nodes
+        try:
+            candidate_rows = self.conn.execute(
+                """SELECT id, content FROM identity_candidates
+                   WHERE status = 'pending'"""
+            ).fetchall()
+            for cand_id, cand_content in candidate_rows:
+                # Count related signals (by keyword overlap)
+                # Simple heuristic: count signals mentioning similar terms
+                signal_count = self.conn.execute(
+                    "SELECT COUNT(*) FROM identity_signals WHERE content LIKE ?",
+                    (f"%{cand_content[:30]}%",),
+                ).fetchone()[0]
+                if signal_count >= 3:
+                    self.actions.append({
+                        "type": "promotion_candidate",
+                        "candidate_id": cand_id,
+                        "content": cand_content[:100],
+                        "signal_count": signal_count,
+                    })
+                    flagged += 1
+        except sqlite3.OperationalError:
+            pass  # identity_candidates table may not exist
+
+        self.identity_flags = flagged
+        self.passes_run.append("identity_consolidation")
+        return flagged
+
+    def pass_retrieval_bias_cleanup(self) -> int:
+        """
+        Pass 13: Expire old retrieval biases and regenerate from observer patterns.
+        """
+        managed = 0
+        now = datetime.now(timezone.utc).isoformat()
+
+        # Check if retrieval_biases table exists
+        try:
+            self.conn.execute("SELECT 1 FROM retrieval_biases LIMIT 1")
+        except sqlite3.OperationalError:
+            self.passes_run.append("retrieval_bias_cleanup")
+            return 0
+
+        # Expire old biases
+        try:
+            cursor = self.conn.execute(
+                "DELETE FROM retrieval_biases WHERE expires_at IS NOT NULL AND expires_at < ?",
+                (now,),
+            )
+            expired = cursor.rowcount
+            if expired > 0:
+                self.actions.append({
+                    "type": "biases_expired",
+                    "count": expired,
+                })
+                managed += expired
+        except Exception:
+            pass
+
+        # Generate new biases from recent cross-session patterns
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=7)).isoformat()
+        try:
+            # Find topics mentioned in 3+ recent entries (cross-session pattern signal)
+            tag_rows = self.conn.execute(
+                """SELECT tags FROM rolodex_entries
+                   WHERE archived_at IS NULL AND created_at >= ?
+                   LIMIT 500""",
+                (cutoff,),
+            ).fetchall()
+
+            # Count tag frequency
+            tag_counts: Dict[str, int] = defaultdict(int)
+            for (tags_json,) in tag_rows:
+                try:
+                    tags = json.loads(tags_json or "[]")
+                    for tag in tags:
+                        if tag and tag != "pending-enrichment":
+                            tag_counts[tag.lower()] += 1
+                except (json.JSONDecodeError, TypeError):
+                    pass
+
+            # Create boost biases for frequently occurring topics
+            expires_at = (datetime.now(timezone.utc) + timedelta(days=14)).isoformat()
+            created = 0
+
+            for tag, count in tag_counts.items():
+                if count >= 5:
+                    bias_id = str(uuid.uuid4())[:12]
+                    try:
+                        self.conn.execute(
+                            """INSERT OR IGNORE INTO retrieval_biases
+                               (id, bias_type, source, topic_keywords, weight,
+                                created_at, expires_at, reason)
+                               VALUES (?, 'boost', 'maintenance', ?, 0.05, ?, ?, ?)""",
+                            (bias_id, tag, now, expires_at,
+                             f"Frequent topic in last 7 days ({count} mentions)"),
+                        )
+                        created += 1
+                    except Exception:
+                        pass
+
+            if created > 0:
+                self.actions.append({
+                    "type": "biases_created",
+                    "count": created,
+                })
+                managed += created
+
+        except Exception:
+            pass
+
+        self.biases_managed = managed
+        self.passes_run.append("retrieval_bias_cleanup")
+        return managed
+
+    # ─── Consolidation Report ────────────────────────────────────────────
+
+    def generate_consolidation_report(self) -> str:
+        """
+        Generate a structured human-readable report from the consolidation pass.
+        Called after run_all() completes.
+        """
+        now_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        lines = [f"=== Consolidation Report ({now_str}) ===", ""]
+
+        # Existing pass stats
+        if self.contradictions_found:
+            lines.append(f"Contradictions found: {self.contradictions_found}")
+        if self.orphans_linked:
+            lines.append(f"Orphaned corrections linked: {self.orphans_linked}")
+        if self.duplicates_merged:
+            lines.append(f"Near-duplicates merged: {self.duplicates_merged}")
+        if self.entries_promoted:
+            lines.append(f"Entries promoted: {self.entries_promoted}")
+        if self.stale_flagged:
+            lines.append(f"Stale entries flagged: {self.stale_flagged}")
+        if self.behavioral_consolidated:
+            lines.append(f"Behavioral entries consolidated: {self.behavioral_consolidated}")
+        if self.confidence_decayed:
+            lines.append(f"Confidence decayed: {self.confidence_decayed}")
+
+        # New consolidation pass stats
+        if self.entries_rescored:
+            lines.append(f"Entries re-scored: {self.entries_rescored}")
+        if self.entities_linked:
+            lines.append(f"Entity links added: {self.entities_linked}")
+        if self.identity_flags:
+            # Break down by type
+            stale = sum(1 for a in self.actions if a.get("type") == "stale_commitment_flagged")
+            advancement = sum(1 for a in self.actions if a.get("type") == "growth_edge_advancement_candidate")
+            promotion = sum(1 for a in self.actions if a.get("type") == "promotion_candidate")
+            parts = []
+            if stale:
+                parts.append(f"{stale} stale commitment(s)")
+            if advancement:
+                parts.append(f"{advancement} growth edge(s) ready for advancement")
+            if promotion:
+                parts.append(f"{promotion} pattern(s) for promotion review")
+            lines.append(f"Identity flags: {', '.join(parts)}")
+        if self.biases_managed:
+            expired = sum(1 for a in self.actions if a.get("type") == "biases_expired")
+            created = sum(1 for a in self.actions if a.get("type") == "biases_created")
+            lines.append(f"Retrieval biases: {expired} expired, {created} created")
+
+        if not any([self.contradictions_found, self.orphans_linked,
+                     self.duplicates_merged, self.entries_promoted,
+                     self.stale_flagged, self.entries_rescored,
+                     self.entities_linked, self.identity_flags,
+                     self.biases_managed, self.confidence_decayed]):
+            lines.append("No actions taken. Knowledge graph is clean.")
+
+        lines.append("")
+        lines.append(f"Entries scanned: {self.entries_scanned}")
+        lines.append(f"Token budget: {self.tokens_used}/{self.token_budget}")
+
+        return "\n".join(lines)
+
     # ─── Run All Passes ──────────────────────────────────────────────────
 
     def run_all(self) -> Dict[str, Any]:
@@ -1391,6 +1836,11 @@ class MaintenanceEngine:
             ("behavioral_consolidation", self.pass_behavioral_consolidation),
             ("uk_tier_promotion", self.pass_uk_tier_promotion),
             ("confidence_decay", self.pass_confidence_decay),
+            # Phase 5: Cognitive consolidation passes
+            ("rescoring", self.pass_rescoring),
+            ("entity_relinking", self.pass_entity_relinking),
+            ("identity_consolidation", self.pass_identity_consolidation),
+            ("retrieval_bias_cleanup", self.pass_retrieval_bias_cleanup),
         ]
         try:
             for _pass_name, _pass_fn in _pass_methods:
@@ -1417,7 +1867,9 @@ class MaintenanceEngine:
             self.duplicates_merged + self.entries_promoted +
             self.stale_flagged + self.compressions_learned +
             self.behavioral_consolidated + self.uk_tier_changes +
-            self.confidence_decayed
+            self.confidence_decayed + self.entries_rescored +
+            self.entities_linked + self.identity_flags +
+            self.biases_managed
         )
 
         # Update log
@@ -1472,6 +1924,10 @@ class MaintenanceEngine:
                 "behavioral_consolidated": self.behavioral_consolidated,
                 "uk_tier_changes": self.uk_tier_changes,
                 "confidence_decayed": self.confidence_decayed,
+                "entries_rescored": self.entries_rescored,
+                "entities_linked": self.entities_linked,
+                "identity_flags": self.identity_flags,
+                "biases_managed": self.biases_managed,
                 "total_actions": total_actions,
             },
             "actions": self.actions,

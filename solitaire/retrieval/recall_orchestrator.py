@@ -69,11 +69,13 @@ class RecallOrchestrator:
         rolodex,  # Rolodex instance
         confidence_threshold: float = 0.45,
         topic_router=None,  # Optional TopicRouter for topic-scoped search
+        identity_graph=None,  # Optional IdentityGraph for identity-aware recall
     ):
         self.conn = conn
         self.rolodex = rolodex
         self.confidence_threshold = confidence_threshold
         self._topic_router = topic_router
+        self._identity_graph = identity_graph
 
         # Initialize pipeline components
         self.trigger = RecallTrigger(conn)
@@ -86,6 +88,26 @@ class RecallOrchestrator:
         except Exception:
             pass
 
+    def _load_identity_context(self) -> Optional[dict]:
+        """
+        Load active identity nodes for identity-aware recall.
+
+        Returns a dict with growth_edges, commitments, patterns, and north_star,
+        or None if no identity graph is available. Failures are silent.
+        """
+        if not self._identity_graph:
+            return None
+        try:
+            ig = self._identity_graph
+            return {
+                "growth_edges": ig.get_active_growth_edges(),
+                "commitments": ig.get_active_commitments(),
+                "patterns": ig.get_top_patterns(limit=5),
+                "north_star": ig.get_north_star(),
+            }
+        except Exception:
+            return None
+
     def run(self, message: str) -> RecallResult:
         """
         Run the full recall pipeline on a user message.
@@ -93,8 +115,11 @@ class RecallOrchestrator:
         Returns RecallResult with entries, tier info, and diagnostics.
         Skips temporal-only queries (caller should handle those separately).
         """
-        # Step 1: Trigger analysis
-        trigger_result = self.trigger.analyze(message)
+        # Step 0: Load identity context (once per recall)
+        identity_context = self._load_identity_context()
+
+        # Step 1: Trigger analysis (with identity-aware query injection)
+        trigger_result = self.trigger.analyze(message, identity_context=identity_context)
 
         if trigger_result.skip_recall:
             return RecallResult(entries=[], scored=[], signals=trigger_result.signals_detected)
@@ -178,6 +203,7 @@ class RecallOrchestrator:
             limit=8,
             fresh_mode=any_fresh,
             query_intent=dominant_intent,
+            identity_context=identity_context,
         )
 
         # Step 6: Tiered confidence waterfall
@@ -207,6 +233,7 @@ class RecallOrchestrator:
                 merged_category_bias=merged_category_bias,
                 any_fresh=any_fresh,
                 dominant_intent=dominant_intent,
+                identity_context=identity_context,
             )
             queries_fired.extend(t2_queries)
 
@@ -232,6 +259,7 @@ class RecallOrchestrator:
                     merged_category_bias=merged_category_bias,
                     any_fresh=any_fresh,
                     dominant_intent=dominant_intent,
+                    identity_context=identity_context,
                 )
                 queries_fired.extend(t3_queries)
 
@@ -377,6 +405,7 @@ class RecallOrchestrator:
         merged_category_bias: List[str],
         any_fresh: bool,
         dominant_intent: str,
+        identity_context: Optional[dict] = None,
     ) -> Tuple[List[ScoredCandidate], List[Tuple], Set[str], List[Dict]]:
         """Tier 2: Broadened FTS sweep with category-targeted queries."""
         queries_fired = []
@@ -434,6 +463,7 @@ class RecallOrchestrator:
             limit=8,
             fresh_mode=any_fresh,
             query_intent=dominant_intent,
+            identity_context=identity_context,
         )
 
         return scored, all_candidates, seen_ids, queries_fired
@@ -448,6 +478,7 @@ class RecallOrchestrator:
         merged_category_bias: List[str],
         any_fresh: bool,
         dominant_intent: str,
+        identity_context: Optional[dict] = None,
     ) -> Tuple[List[ScoredCandidate], List[Tuple], List[Dict]]:
         """Tier 3: Deep biographical / oldest-first sweep with force-injection."""
         queries_fired = []
@@ -529,6 +560,7 @@ class RecallOrchestrator:
             limit=8,
             fresh_mode=any_fresh,
             query_intent=dominant_intent,
+            identity_context=identity_context,
         )
 
         return scored, all_candidates, queries_fired
