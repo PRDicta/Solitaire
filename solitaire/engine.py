@@ -161,6 +161,17 @@ class SolitaireEngine:
             session_info = self._lib.resume_session(old_session_id)
             if session_info:
                 self._session_id = old_session_id
+                # Rebind JSONL audit trail to the resumed session
+                if self._lib.rolodex._jsonl_session_id:
+                    self._lib.rolodex._jsonl_session_id = old_session_id
+                if (hasattr(self._lib, 'topic_router')
+                        and self._lib.topic_router._jsonl_session_id):
+                    self._lib.topic_router._jsonl_session_id = old_session_id
+                # Reset pressure monitor so stale orphan-session
+                # pressure history doesn't bleed into the resumed session
+                if hasattr(self._lib, 'librarian_agent'):
+                    from .preloading.pressure import PressureMonitor
+                    self._lib.librarian_agent.pressure_monitor = PressureMonitor()
                 # Clean up the orphan session row created during init
                 if orphan_id != old_session_id:
                     try:
@@ -926,7 +937,8 @@ class SolitaireEngine:
         Supersede a factually wrong entry with corrected content.
 
         The old entry is soft-deleted (hidden from search, kept in DB).
-        The corrected content is ingested as user_knowledge.
+        The corrected content is ingested as user_knowledge into the
+        *original entry's session* to avoid cross-session contamination.
 
         Args:
             old_entry_id: ID of the entry to supersede.
@@ -936,6 +948,14 @@ class SolitaireEngine:
             Dict with: corrected (bool), old_entry_id, new_entry_id.
         """
         self._ensure_booted("correct")
+
+        # Look up the original entry to find its session context
+        original = self._lib.rolodex.get_entry(old_entry_id)
+        target_session = (
+            original.conversation_id
+            if original and original.conversation_id
+            else self._session_id
+        )
 
         entries = self._run_async(
             self._lib.ingest("user", corrected_text)
@@ -951,13 +971,21 @@ class SolitaireEngine:
             category=EntryCategory.USER_KNOWLEDGE,
         )
 
+        # Rebind the corrected entry to the original's session
+        if target_session != self._session_id:
+            self._lib.rolodex.conn.execute(
+                "UPDATE rolodex_entries SET conversation_id = ? WHERE id = ?",
+                (target_session, new_entry.id),
+            )
+            self._lib.rolodex.conn.commit()
+
         existed = self._lib.rolodex.supersede_entry(old_entry_id, new_entry.id)
 
         return {
             "corrected": existed,
             "old_entry_id": old_entry_id,
             "new_entry_id": new_entry.id,
-            "session_id": self._session_id,
+            "session_id": target_session,
         }
 
     # ─── Profile Management ──────────────────────────────────────────────
