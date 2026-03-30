@@ -476,16 +476,19 @@ class TestImportOrchestrator:
 
 class TestReaderRegistry:
     def test_auto_discover(self, registry):
-        assert registry.count == 4
+        assert registry.count == 7
         assert registry.has("auto-memory")
         assert registry.has("jsonl")
         assert registry.has("chatgpt-export")
         assert registry.has("text")
+        assert registry.has("claude-md")
+        assert registry.has("markdown-kb")
+        assert registry.has("solitaire-instance")
 
     def test_list_sources(self, registry):
         sources = registry.list_sources()
         ids = {s["source_id"] for s in sources}
-        assert ids == {"auto-memory", "jsonl", "chatgpt-export", "text"}
+        assert ids == {"auto-memory", "jsonl", "chatgpt-export", "text", "claude-md", "markdown-kb", "solitaire-instance"}
 
     def test_get_returns_none_for_unknown(self, registry):
         assert registry.get("nonexistent") is None
@@ -833,7 +836,7 @@ class TestAdapterCLI:
         cli = self._make_cli(registry, tmp_dir)
         result = cli.dispatch(["sources"])
         assert result["status"] == "ok"
-        assert result["count"] == 4
+        assert result["count"] == 7
 
     def test_connect_and_status(self, registry, auto_memory_dir, tmp_dir):
         cli = self._make_cli(registry, tmp_dir)
