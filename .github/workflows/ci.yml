@@ -29,3 +29,30 @@ jobs:
 
       - name: Run tests
         run: python -m pytest tests/ -v
+
+  release-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install build tools
+        run: pip install build
+
+      - name: Build wheel and sdist
+        run: python -m build
+
+      - name: Install from wheel in clean venv
+        run: |
+          python -m venv /tmp/smoke-test
+          /tmp/smoke-test/bin/pip install dist/*.whl
+
+      - name: Smoke test CLI entrypoints
+        run: |
+          /tmp/smoke-test/bin/solitaire --version
+          /tmp/smoke-test/bin/python -m solitaire --version
+          /tmp/smoke-test/bin/solitaire pulse || true

@@ -95,6 +95,16 @@ class LibrarianAgent:
             if entries:
                 self.rolodex.batch_create_entries(entries)
                 self._total_entries_created += len(entries)
+
+                # Contradiction detection on newly stored entries
+                try:
+                    from ..indexing.contradiction_detector import IngestionContradictionDetector
+                    detector = IngestionContradictionDetector(self.rolodex.conn)
+                    for entry in entries:
+                        detector.check(entry)
+                except Exception:
+                    pass  # Contradiction detection is supplementary
+
             # Update state
             self._last_indexed_turn = new_messages[-1].turn_number
             return entries
@@ -162,6 +172,18 @@ class LibrarianAgent:
                         await self._topic_router.infer_topic(extra)
                 except Exception:
                     pass  # Topic assignment is supplementary
+
+            # Contradiction detection: check enriched entry against existing entries
+            try:
+                from ..indexing.contradiction_detector import IngestionContradictionDetector
+                detector = IngestionContradictionDetector(self.rolodex.conn)
+                enriched_entry = self.rolodex.get_entry(stub_id)
+                if enriched_entry:
+                    detector.check(enriched_entry)
+                for extra in (entries[1:] if len(entries) > 1 else []):
+                    detector.check(extra)
+            except Exception:
+                pass  # Contradiction detection is supplementary
 
         elif task.stub_entry_ids:
             # Extraction produced nothing — mark stub as enriched anyway

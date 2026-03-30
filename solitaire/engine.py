@@ -261,17 +261,17 @@ class SolitaireEngine:
     # ─── Mark Response ─────────────────────────────────────────────────────
 
     def mark_response(self, response_text: str) -> Dict[str, Any]:
-        """Store the assistant's response for deferred ingestion.
+        """Store the assistant's response in session state.
 
         Called after the LLM generates its response. Writes the response text
-        to pending_ingest.assistant in session state. The next recall() call
-        will find the complete turn pair and ingest it as Step 0.
+        to session state for use by the diarize command. Actual ingestion is
+        handled by the auto-ingest Stop hook, not by this method.
 
         Args:
             response_text: The assistant's full response text.
 
         Returns:
-            Dict with: status, whether pair is ready for ingestion.
+            Dict with: status, whether response was stored.
         """
         if not response_text or not response_text.strip():
             return {"status": "skip", "reason": "empty_response"}
@@ -301,12 +301,11 @@ class SolitaireEngine:
             return {"error": f"mark_response failed: {e}"}
 
     def diarize(self, response_text: str, residue_text: str) -> Dict[str, Any]:
-        """Combined closing-anchor procedure: mark response + write residue.
+        """Combined procedure: store response in session state + write residue.
 
-        This is the format-anchor enforcement mechanism. The closing anchor `-`
-        cannot be written without diarize having fired. Combines mark_response
-        (stores assistant response for deferred ingestion) and write_residue
-        (session texture) into one atomic call.
+        Used as a manual alternative when hooks are not available. In the
+        hook-based architecture, auto-ingest handles ingestion automatically
+        and this method is only needed for explicit residue writes.
 
         Args:
             response_text: The assistant's full response text.
@@ -317,7 +316,7 @@ class SolitaireEngine:
         """
         result = {"status": "ok"}
 
-        # Step 1: Mark response (stores for deferred ingestion)
+        # Step 1: Store response in session state
         if response_text and response_text.strip():
             mr_result = self.mark_response(response_text)
             result["mark_response"] = mr_result
