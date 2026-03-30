@@ -12,41 +12,52 @@
 
 # Solitaire for Agents
 
-Open-source identity and memory layer for AI agents.
+Identity infrastructure for AI agents. Not just another memory tool.
 
-**Memory is solved. Identity isn't.**
+Most memory tools help agents retrieve facts from prior conversations. Useful...but not enough. Your agent still feels like a smart stranger with a better notebook.
 
-Most memory tools help agents retrieve facts from prior conversations. Solitaire goes further: it helps agents build a stable understanding of the user over time, so behavior changes across sessions instead of just recall quality. Session 50 should feel fundamentally different from session 5, because something real has accumulated between them.
+Solitaire gives agents the infrastructure to learn how you work, carry that forward, and become a better collaborator over time. Memory is one component. The rest is what makes the difference: persona compilation, behavioral continuity, self-correcting retrieval, and session texture that persists across time.
 
-## Why Solitaire exists
+Bring your own memory system or use ours. Solitaire sits above the storage layer, so the identity infrastructure works either way.
 
-AI models are still too stateless in practice. Even with "memory," most agents feel like smart strangers. They may remember your name or a project detail from last week, but the collaboration itself doesn't deepen. The model recalls facts without becoming a better partner.
+## What changes over time
 
-Solitaire gives agents persistent memory, persistent identity, and persistent behavioral context, so they can carry forward not just what matters to you, but how to work with you.
+**First session:** Solitaire learns your name, your project, your preferences. You choose a name for your partner, and the work begins.
+
+**By session ten:** It knows your working preferences, your communication patterns, and which retrieved context actually helped. Retrieval is self-tuning. The agent doesn't just recall, it's been briefed.
+
+**By session one hundred:** Thousands of entries in the knowledge graph. A behavioral profile shaped by real interaction, not static configuration. The agent doesn't just remember you, it works like someone who's been working with you for months.
 
 ## Proof
 
-| Metric | Value |
-|--------|-------|
-| Real sessions of longitudinal use | 600+ |
-| Accumulated memory entries | 14,000+ |
-| Precision@3 improvement | 80% → 100% |
-| Persona trait alignment | 2.25/5 → 4.43/5 |
-| Dify integration | Prototype complete (available separately) |
-| Claude Code / Cowork usage | Production |
-| Supporting research papers | 2 |
+600+ sessions | 14,000+ entries | Production since February 2026
+
+| What we measured | Before | After | What it means |
+|-----------------|--------|-------|---------------|
+| Retrieval precision (top 3 results) | 80% | 100% | Early on, 1 in 3 retrieved memories was irrelevant. Now all three are useful. |
+| Persona trait alignment (5-point scale) | 2.25 | 4.43 | The agent's working style started as a poor match. It's now a close one. |
+
+Both metrics measured across 600+ real sessions with a single-dyad deployment. Two accompanying research papers formalize the methodology and findings.
 
 ## What makes it different
 
-**Identity, not just retrieval.** Most memory tools store facts and retrieve them later. Solitaire also builds a behavioral identity layer: persona compilation, disposition modeling, voice and profile shaping, and session residues that help the agent maintain continuity across time.
+**Behavioral genome.** Solitaire doesn't store a static persona config. It builds a disposition profile from real interaction: observance, assertiveness, warmth, initiative, humor. These traits evolve as the system accumulates evidence. The agent's working style changes because the data changes, not because someone edited a prompt.
 
-**Self-correcting retrieval.** Solitaire tracks which retrieved memories actually prove useful in responses and adjusts weighting over time. Entries that help get surfaced more. Entries that don't fade back. The retrieval system calibrates itself without being told what "right" means.
+**Experiential memory.** Most memory systems store what was said. Solitaire also encodes how sessions felt: texture, rhythm, and learned patterns from specific interactions. Session residues carry forward not just facts but the quality of the collaboration, so the next session boots with context that no retrieval query would surface.
 
-**Self-healing knowledge graph.** A maintenance engine runs during idle time to keep the knowledge graph accurate. It detects contradictions between entries (numeric, preference, negation), recalculates confidence for stale entries, links entities across documents, and consolidates identity signals. Contradictions detected at ingestion time are stored for user resolution. The same conflict detection heuristics operate at both ingestion and retrieval, so the system catches inconsistencies on the way in and on the way out.
+**Autonomous self-improvement.** The system maintains itself. Retrieval weights adjust based on what actually proved useful. The knowledge graph heals autonomously: contradiction detection, confidence rescoring, entity relinking, identity consolidation. The same conflict heuristics run at ingestion and retrieval. Nothing requires manual intervention.
 
-**Local-first by default.** The memory engine runs locally. Storage stays in SQLite and JSONL inside your workspace. No cloud dependency for the core system. Your data never leaves your machine.
+**Anticipatory retrieval.** Solitaire doesn't wait to be asked. The preloading system predicts what context you're likely to need based on session patterns and proactively warms the cache. High-confidence predictions are injected automatically. The agent shows up prepared.
 
-**Model-agnostic.** Claude, Gemini, a custom LLM, or another host: Solitaire returns context in plain structures and lets the host decide how to inject it. It doesn't care what model you use. It cares about the relationship between the model and the person using it.
+**Guided onboarding.** New users don't configure a JSON file. Solitaire walks them through creating a partner: personality traits, working style, domain scope, communication preferences. The persona is built from a conversation, not a config.
+
+**External memory import.** Bring your own data. The symbiosis adapter imports from Cowork, ChatGPT exports, JSONL, and plain text. Deduplication is automatic. Your existing context isn't stranded.
+
+---
+
+**Local-first.** All storage is SQLite and JSONL in your workspace. Zero network requests from the core engine. Your data stays on your machine.
+
+**Model-agnostic.** Returns context in plain structures. The host agent decides how to inject it. Works with Claude, Gemini, local models, or anything else. If your setup isn't covered, reach out. We aim to support it.
 
 ## Getting started
 
@@ -66,6 +77,8 @@ pip install -e .
 3. Open Claude Code and select the `Solitaire-for-Agents` folder as your workspace
 
 Solitaire boots automatically on your first message, walks you through creating a partner, and starts learning from every conversation. Auto-ingestion runs via a Stop hook, so memory capture is mechanical rather than instruction-dependent.
+
+For Hermes, OpenClaw, Gemini CLI, or Dify, see [Platform compatibility](#platform-compatibility) below.
 
 ### From source (any agent platform)
 
@@ -124,12 +137,11 @@ All commands output JSON to stdout and diagnostics to stderr.
 
 ## Use cases
 
-Solitaire is for developers who want agents to feel continuous across time.
-
-- **Coding agents** that remember project history and user preferences
-- **Personal assistants** that maintain working context across sessions
-- **AI products** that need persistent personalization instead of shallow recall
-- **Enterprise teams** who want local-first memory and identity infrastructure under their control
+- **Coding agents** that adapt their review style to your preferences, learn your project conventions, and stop asking questions you've already answered
+- **Personal assistants** that know when to be brief and when to explain, based on how you've worked together, not a system prompt someone wrote once
+- **AI products** that offer real personalization: behavioral continuity, evolving user profiles, and self-correcting retrieval, not just a vector store with a "memory" label
+- **Enterprise teams** that need isolated personas for different departments sharing a common knowledge layer, with all data local and under their control
+- **Agent builders** who want to add an identity layer to any framework without locking into a specific model or platform
 
 ## Platform compatibility
 
@@ -194,34 +206,37 @@ The minimum viable loop: boot once, ingest every turn, end once.
 ```
 Host Agent (Claude, Gemini, custom LLM, etc.)
     │
-    ├── CLI (solitaire command, 34 commands)
-    ├── Python API (SolitaireEngine class)
-    ├── Skill manifest (SKILL.md for Hermes/OpenClaw/Gemini)
+    ├── CLI (solitaire command)
+    ├── Python API (SolitaireEngine)
+    ├── Skill manifest (SKILL.md)
+    ├── Hooks (session-boot, auto-recall, auto-ingest, claim-scanner)
     └── Dify plugin (5 tool nodes)
           │
-    SolitaireEngine (model-agnostic public API)
+    SolitaireEngine
           │
-    ┌─────┼─────────────────────────┐
-    │     │                         │
-  Core Domain              Retrieval Layer
-  - Persona & identity     - Vector + keyword search
-  - Session management     - Query expansion
-  - Self-learning stack    - 7-signal reranking
-  - Intent routing         - Contradiction post-filter
-  - Pattern detection      - Context builder
-    │                               │
-  Indexing Layer            Maintenance Layer
-  - Ingestion queue        - 13-pass hygiene engine
-  - Entity extraction      - Confidence rescoring
-  - Contradiction detect.  - Entity relinking
-  - Provenance assignment  - Identity consolidation
-  - Embedding generation   - Retrieval bias generation
-    │                               │
-  Storage Layer
-  - SQLite knowledge graph
-  - Identity graph
-  - JSONL turn archives
-  - Session state
+    ┌─────┴──────────────────────────────────┐
+    │                                        │
+  Identity Layer                    Retrieval Layer
+  - Behavioral genome               - Vector + keyword search
+  - Persona compilation              - Query expansion + reranking
+  - Disposition modeling             - Anticipatory preloading
+  - Session residues                 - Evaluation gate
+  - Onboarding flow                  - Conflict post-filter
+  - Identity scaffolding             - Context builder
+    │                                        │
+  Knowledge Layer                   Maintenance Layer
+  - Ingestion queue                  - Autonomous hygiene engine
+  - Entity extraction                - Contradiction detection
+  - Topic routing                    - Confidence rescoring
+  - Experiential encoding            - Entity relinking
+  - Texture extraction               - Identity consolidation
+    │                                        │
+  Storage Layer                     Symbiosis Layer
+  - SQLite knowledge graph           - Cowork auto-memory import
+  - Identity graph                   - ChatGPT export import
+  - JSONL turn archives              - JSONL / plain text import
+  - Session state                    - Deduplication + live sync
+  - Automatic backups
 ```
 
 ## What's stored locally
@@ -230,8 +245,8 @@ After your first session, the workspace contains:
 
 | Path | Contents |
 |------|----------|
-| `rolodex.db` | SQLite knowledge graph (memories, entities, relationships) |
-| `personas/` | Persona configurations (traits, north star, domain scope) |
+| `rolodex.db` | SQLite knowledge graph (memories, entities, relationships, identity signals) |
+| `personas/` | Persona configurations (traits, disposition profile, north star, domain scope) |
 | `sessions/` | Session state and metadata |
 | `*.jsonl` | Verbatim turn pair archives |
 | `backups/` | Timestamped SQLite + persona snapshots with configurable retention |
