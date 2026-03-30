@@ -21,7 +21,19 @@ from solitaire.outbound.structural_detectors import (
     run_structural_scan,
     StructuralDetection,
 )
-from solitaire.outbound.config import WritingGateConfig
+from solitaire.outbound.persona_detectors import (
+    run_persona_drift_scan,
+    PersonaDriftDetection,
+)
+from solitaire.outbound.commitment_detectors import (
+    run_commitment_scan,
+    CommitmentDetection,
+)
+from solitaire.outbound.context_detectors import (
+    run_context_scan,
+    ContextDetection,
+)
+from solitaire.outbound.config import WritingGateConfig, PersonaTraits, TranscriptContext
 
 
 @dataclass
@@ -34,6 +46,7 @@ class WritingViolation:
     samples: List[str]      # up to 3 matched snippets
     detail: str             # human-readable explanation
     score: Optional[float]  # numeric value where applicable
+    confidence: str = "high"  # "high" | "low" — low-confidence routes to model verification
 
 
 @dataclass
@@ -59,24 +72,36 @@ class WritingGateResult:
                     "samples": v.samples,
                     "detail": v.detail,
                     "score": v.score,
+                    "confidence": v.confidence,
                 }
                 for v in self.violations
             ],
         }
 
 
-def scan(text: str, config: Optional[WritingGateConfig] = None) -> WritingGateResult:
+def scan(
+    text: str,
+    config: Optional[WritingGateConfig] = None,
+    persona_traits: Optional[PersonaTraits] = None,
+    transcript: Optional[TranscriptContext] = None,
+) -> WritingGateResult:
     """Run the full writing quality scan on assistant output.
 
     Args:
         text: The assistant's response text.
         config: Per-persona configuration. Uses defaults if None.
+        persona_traits: Persona trait values for Layers 3-4. Uses neutral defaults if None.
+        transcript: Transcript context for Layers 4-5. Skips context-dependent checks if None.
 
     Returns:
         WritingGateResult with all violations found.
     """
     if config is None:
         config = WritingGateConfig()
+    if persona_traits is None:
+        persona_traits = PersonaTraits()
+    if transcript is None:
+        transcript = TranscriptContext()
 
     violations: List[WritingViolation] = []
 
@@ -109,6 +134,7 @@ def scan(text: str, config: Optional[WritingGateConfig] = None) -> WritingGateRe
                 samples=hit.samples,
                 detail=hit.detail,
                 score=None,
+                confidence=hit.confidence,
             ))
 
     # Layer 2: Structural shape
@@ -123,10 +149,67 @@ def scan(text: str, config: Optional[WritingGateConfig] = None) -> WritingGateRe
                 samples=hit.samples,
                 detail=hit.detail,
                 score=hit.score,
+                confidence=hit.confidence,
             ))
 
-    # Layers 3-5: v2/v3 (placeholder)
-    # persona_detectors, commitment_detectors, context_detectors
+    # Layer 3: Persona drift
+    if config.persona_drift.enabled:
+        persona_hits = run_persona_drift_scan(
+            cleaned,
+            user_text=transcript.user_text,
+            assertiveness=persona_traits.assertiveness,
+            warmth=persona_traits.warmth,
+            verbosity=persona_traits.verbosity,
+        )
+        for hit in persona_hits:
+            violations.append(WritingViolation(
+                layer=3,
+                category=hit.category,
+                severity=hit.severity,
+                count=hit.count,
+                samples=hit.samples,
+                detail=hit.detail,
+                score=hit.score,
+                confidence=hit.confidence,
+            ))
+
+    # Layer 4: Commitment adherence
+    if config.commitment.enabled:
+        commitment_hits = run_commitment_scan(
+            cleaned,
+            prior_assistant_text=transcript.prior_assistant_text,
+            conviction=persona_traits.conviction,
+        )
+        for hit in commitment_hits:
+            violations.append(WritingViolation(
+                layer=4,
+                category=hit.category,
+                severity=hit.severity,
+                count=hit.count,
+                samples=hit.samples,
+                detail=hit.detail,
+                score=hit.score,
+                confidence=hit.confidence,
+            ))
+
+    # Layer 5: Context coherence
+    if config.context.enabled:
+        context_hits = run_context_scan(
+            cleaned,
+            user_text=transcript.user_text,
+            prior_turns=transcript.prior_turns_text,
+        )
+        for hit in context_hits:
+            violations.append(WritingViolation(
+                layer=5,
+                category=hit.category,
+                severity=hit.severity,
+                count=hit.count,
+                samples=hit.samples,
+                detail=hit.detail,
+                score=hit.score,
+                confidence=hit.confidence,
+            ))
 
     # Build layer scores
     layer_scores: Dict[str, Optional[float]] = {
@@ -136,7 +219,9 @@ def scan(text: str, config: Optional[WritingGateConfig] = None) -> WritingGateRe
         "commitment": None,
         "context": None,
     }
-    for layer_name, layer_num in [("surface", 1), ("structural", 2)]:
+    for layer_name, layer_num in [("surface", 1), ("structural", 2),
+                                   ("persona_drift", 3), ("commitment", 4),
+                                   ("context", 5)]:
         layer_v = [v for v in violations if v.layer == layer_num]
         if layer_v:
             warning_count = sum(1 for v in layer_v if v.severity == "warning")

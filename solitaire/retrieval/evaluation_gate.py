@@ -49,6 +49,7 @@ class EvaluationFlag:
     category: str       # destructive, disproportionate, label_mismatch, etc.
     severity: str       # info, warning, block
     detail: str         # Human-readable explanation
+    confidence: str = "high"  # "high" | "low" — low-confidence flags ask model to verify
 
 
 @dataclass
@@ -773,10 +774,12 @@ def _check_writing_quality(workspace_dir: Optional[str] = None) -> List[Evaluati
         category = v.get("category", "unknown")
         severity = v.get("severity", "info")
         detail = v.get("detail", "")
+        confidence = v.get("confidence", "high")
         flags.append(EvaluationFlag(
             category=f"writing_{category}",
             severity=severity,
             detail=detail,
+            confidence=confidence,
         ))
 
     return flags
@@ -943,16 +946,29 @@ def build_evaluation_block(result: EvaluationResult) -> str:
 
     if has_writing_flags:
         writing_flags = [f for f in result.flags if f.category.startswith("writing_")]
-        parts.append("")
-        parts.append("\u26a0 WRITING QUALITY: Previous response had writing tells.")
-        for wf in writing_flags:
-            severity_marker = {
-                "warning": "\u26a0",
-                "info": "\u2139",
-            }.get(wf.severity, "\u2022")
-            display_cat = wf.category.replace("writing_", "", 1)
-            parts.append(f"  {severity_marker} [{display_cat}] {wf.detail}")
-        parts.append("  Self-check before this response: scan output for these patterns before sending.")
+        high_conf = [f for f in writing_flags if f.confidence == "high"]
+        low_conf = [f for f in writing_flags if f.confidence == "low"]
+
+        if high_conf:
+            parts.append("")
+            parts.append("\u26a0 WRITING QUALITY: Previous response had writing tells.")
+            for wf in high_conf:
+                severity_marker = {
+                    "warning": "\u26a0",
+                    "info": "\u2139",
+                }.get(wf.severity, "\u2022")
+                display_cat = wf.category.replace("writing_", "", 1)
+                parts.append(f"  {severity_marker} [{display_cat}] {wf.detail}")
+            parts.append("  Self-check before this response: scan output for these patterns before sending.")
+
+        if low_conf:
+            parts.append("")
+            parts.append("\u2753 WRITING QUALITY REVIEW: Verify these possible issues from previous response.")
+            parts.append("  The structural scanner flagged these but confidence is low.")
+            parts.append("  Review each. If genuine, correct in this response. If false positive, ignore.")
+            for wf in low_conf:
+                display_cat = wf.category.replace("writing_", "", 1)
+                parts.append(f"  \u2753 [{display_cat}] {wf.detail}")
 
     if result.initiative_prompt:
         parts.append("")
