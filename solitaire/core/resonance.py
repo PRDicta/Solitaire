@@ -13,7 +13,7 @@ Example:
               layer is real."
 
 Resonance lines are stored in the node's metadata dict under the
-key "resonance_line". They're generated heuristically from the node's
+key "texture". They're generated heuristically from the node's
 type and content, with template variation to avoid repetitive phrasing.
 
 Cost: ~10 tokens per node. Loaded at boot in the identity context block.
@@ -185,7 +185,7 @@ _RESONANCE_GENERATORS = {
 }
 
 
-def generate_resonance_line(node_type: str, content: str) -> Optional[str]:
+def generate_texture(node_type: str, content: str) -> Optional[str]:
     """Generate a resonance line for an identity graph node.
 
     Args:
@@ -204,7 +204,7 @@ def generate_resonance_line(node_type: str, content: str) -> Optional[str]:
 
 # ─── Batch Operations ───────────────────────────────────────────────────────
 
-def backfill_resonance_lines(identity_graph) -> Dict[str, int]:
+def backfill_textures(identity_graph) -> Dict[str, int]:
     """Generate resonance lines for all nodes that don't have one.
 
     Args:
@@ -224,13 +224,13 @@ def backfill_resonance_lines(identity_graph) -> Dict[str, int]:
         processed += 1
         meta = node.metadata if isinstance(node.metadata, dict) else {}
 
-        if meta.get("resonance_line"):
+        if meta.get("texture"):
             skipped += 1
             continue
 
-        resonance = generate_resonance_line(node.node_type, node.content)
+        resonance = generate_texture(node.node_type, node.content)
         if resonance:
-            meta["resonance_line"] = resonance
+            meta["texture"] = resonance
             identity_graph.conn.execute(
                 "UPDATE identity_nodes SET metadata = ? WHERE id = ?",
                 (json.dumps(meta), node.id)
@@ -248,13 +248,13 @@ def count_resonance_nodes(identity_graph) -> int:
     import json
     try:
         rows = identity_graph.conn.execute(
-            "SELECT metadata FROM identity_nodes WHERE metadata LIKE '%resonance_line%'"
+            "SELECT metadata FROM identity_nodes WHERE metadata LIKE '%texture%'"
         ).fetchall()
         count = 0
         for row in rows:
             try:
                 meta = json.loads(row[0]) if row[0] else {}
-                if meta.get("resonance_line"):
+                if meta.get("texture"):
                     count += 1
             except (json.JSONDecodeError, TypeError):
                 pass
