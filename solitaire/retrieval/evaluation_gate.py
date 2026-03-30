@@ -706,6 +706,7 @@ _VERIFICATION_SIGNALS = [
 
 # Marker directory for inter-turn communication with the Stop hook
 _CLAIM_MARKER_DIR = os.path.join(tempfile.gettempdir(), "solitaire_claim_markers")
+_WRITING_MARKER_DIR = os.path.join(tempfile.gettempdir(), "solitaire_writing_markers")
 
 
 def _has_remote_context(message: str) -> bool:
@@ -738,6 +739,47 @@ def _read_claim_marker(workspace_dir: Optional[str]) -> Optional[dict]:
         return data
     except Exception:
         return None
+
+
+def _read_writing_marker(workspace_dir: Optional[str]) -> Optional[dict]:
+    """Read and consume a writing quality marker from the Stop hook, if present."""
+    if not workspace_dir:
+        return None
+    try:
+        marker_dir = Path(_WRITING_MARKER_DIR)
+        if not marker_dir.exists():
+            return None
+        import hashlib as _hashlib
+        ws_hash = _hashlib.md5(workspace_dir.encode()).hexdigest()[:12]
+        marker_path = marker_dir / ws_hash
+        if not marker_path.exists():
+            return None
+        data = json.loads(marker_path.read_text(encoding="utf-8"))
+        marker_path.unlink()
+        return data
+    except Exception:
+        return None
+
+
+def _check_writing_quality(workspace_dir: Optional[str] = None) -> List[EvaluationFlag]:
+    """Check for writing quality violations from the Stop hook marker."""
+    flags: List[EvaluationFlag] = []
+    marker = _read_writing_marker(workspace_dir)
+    if not marker:
+        return flags
+
+    violations = marker.get("violations", [])
+    for v in violations:
+        category = v.get("category", "unknown")
+        severity = v.get("severity", "info")
+        detail = v.get("detail", "")
+        flags.append(EvaluationFlag(
+            category=f"writing_{category}",
+            severity=severity,
+            detail=detail,
+        ))
+
+    return flags
 
 
 def _check_unverified_claims(
@@ -847,8 +889,12 @@ def build_evaluation_block(result: EvaluationResult) -> str:
         )
         for f in result.flags
     )
+    has_writing_flags = any(
+        f.category.startswith("writing_") for f in result.flags
+    )
     if (result.proceed and not result.initiative_prompt
-            and not result.needs_confirmation and not has_claim_flags):
+            and not result.needs_confirmation and not has_claim_flags
+            and not has_writing_flags):
         return ""
 
     parts = []
@@ -894,6 +940,19 @@ def build_evaluation_block(result: EvaluationResult) -> str:
         parts.append("  2. When was this evidence collected? Is it current?")
         parts.append("  3. Could the state have changed since?")
         parts.append("  If you cannot answer all three, state what you don't know instead.")
+
+    if has_writing_flags:
+        writing_flags = [f for f in result.flags if f.category.startswith("writing_")]
+        parts.append("")
+        parts.append("\u26a0 WRITING QUALITY: Previous response had writing tells.")
+        for wf in writing_flags:
+            severity_marker = {
+                "warning": "\u26a0",
+                "info": "\u2139",
+            }.get(wf.severity, "\u2022")
+            display_cat = wf.category.replace("writing_", "", 1)
+            parts.append(f"  {severity_marker} [{display_cat}] {wf.detail}")
+        parts.append("  Self-check before this response: scan output for these patterns before sending.")
 
     if result.initiative_prompt:
         parts.append("")
@@ -1070,7 +1129,11 @@ def evaluate_message(
     claim_flags = _check_unverified_claims(message, workspace_dir=workspace_dir)
     result.flags.extend(claim_flags)
 
-    # 7. Determine proceed/stop
+    # 7. Writing quality — check for AI writing tells from previous response
+    writing_flags = _check_writing_quality(workspace_dir=workspace_dir)
+    result.flags.extend(writing_flags)
+
+    # 8. Determine proceed/stop
     # Block if any warning+ flags exist on action requests
     if result.intent == "action_request" and result.flags:
         has_warning_or_higher = any(
@@ -1139,7 +1202,7 @@ def evaluate_message(
                 "Verify before building on those claims."
             )
 
-    # 8. Build context block
+    # 9. Build context block
     result.context_block = build_evaluation_block(result)
 
     return result

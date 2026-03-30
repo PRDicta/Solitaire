@@ -37,6 +37,11 @@
             "type": "command",
             "command": "python .claude/hooks/claim-scanner.py",
             "timeout": 30
+          },
+          {
+            "type": "command",
+            "command": "python .claude/hooks/writing-gate.py",
+            "timeout": 30
           }
         ]
       }
