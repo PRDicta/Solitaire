@@ -40,7 +40,9 @@ def write_marker(violations: list, persona_key: str, workspace: Optional[str] = 
             "context": None,
         }
         # Simple aggregate: count violations per layer, normalize to 0-1
-        for layer_name, layer_num in [("surface", 1), ("structural", 2)]:
+        for layer_name, layer_num in [("surface", 1), ("structural", 2),
+                                       ("persona_drift", 3), ("commitment", 4),
+                                       ("context", 5)]:
             layer_violations = [v for v in violations if v.get("layer") == layer_num]
             if layer_violations:
                 # More violations = higher score (worse)

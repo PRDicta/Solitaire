@@ -22,6 +22,7 @@ class StructuralDetection:
     samples: List[str]      # descriptive samples (word counts, etc.)
     detail: str             # human-readable explanation
     score: Optional[float]  # e.g., CV value
+    confidence: str = "high"  # "high" | "low" — low routes to model verification
 
 
 # ═══════════════════════════════════════════════════════════════════════════

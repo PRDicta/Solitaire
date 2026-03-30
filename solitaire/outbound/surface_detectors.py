@@ -26,6 +26,7 @@ class SurfaceDetection:
     count: int              # number of occurrences
     samples: List[str]      # up to 3 matched snippets, 60 chars max
     detail: str             # human-readable explanation
+    confidence: str = "high"  # "high" | "low" — low routes to model verification
 
 
 # ── Cursed word list (ai_writing_tells.md category 1) ────────────────────
