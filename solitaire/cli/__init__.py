@@ -137,6 +137,45 @@ def mark_response_top(ctx, response_text, from_stdin):
     _do_mark_response(ctx, response_text, from_stdin)
 
 
+@cli.command("diarize")
+@click.argument("response_text", required=False, default="")
+@click.argument("residue_text", required=False, default="")
+@click.option("--stdin", "-", "from_stdin", is_flag=True,
+              help='Read JSON from stdin: {"response": "...", "residue": "..."}')
+@click.pass_context
+def diarize_top(ctx, response_text, residue_text, from_stdin):
+    """Combined closing-anchor procedure: mark response + write residue."""
+    if from_stdin or response_text == "-":
+        import sys as _sys
+        try:
+            raw = _sys.stdin.read()
+            data = json.loads(raw)
+            response_text = data.get("response", "")
+            residue_text = data.get("residue", "")
+        except (json.JSONDecodeError, KeyError) as e:
+            from .core import output_error
+            output_error(
+                f"Invalid JSON on stdin: {e}. Expected: "
+                '{"response": "...", "residue": "..."}',
+                exit_code=2,
+            )
+            return
+
+    if not response_text and not residue_text:
+        from .core import output_error
+        output_error(
+            'Usage: solitaire diarize "response" "residue" '
+            "OR echo '{\"response\":\"...\",\"residue\":\"...\"}' | solitaire diarize -",
+            exit_code=2,
+        )
+        return
+
+    from .core import get_engine, output_json
+    engine = get_engine(ctx)
+    result = engine.diarize(response_text=response_text, residue_text=residue_text)
+    output_json(result)
+
+
 @cli.command("auto-recall")
 @click.argument("message")
 @click.pass_context

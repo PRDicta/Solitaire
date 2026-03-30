@@ -158,3 +158,38 @@ def remember(ctx, fact):
 def mark_response(ctx, response_text, from_stdin):
     """Store assistant response for deferred ingestion."""
     _do_mark_response(ctx, response_text, from_stdin)
+
+
+@core.command("diarize")
+@click.argument("response_text", required=False, default="")
+@click.argument("residue_text", required=False, default="")
+@click.option("--stdin", "-", "from_stdin", is_flag=True,
+              help="Read JSON from stdin")
+@click.pass_context
+def diarize(ctx, response_text, residue_text, from_stdin):
+    """Combined closing-anchor procedure: mark response + write residue."""
+    if from_stdin or response_text == "-":
+        try:
+            raw = sys.stdin.read()
+            data = json.loads(raw)
+            response_text = data.get("response", "")
+            residue_text = data.get("residue", "")
+        except (json.JSONDecodeError, KeyError) as e:
+            output_error(
+                f"Invalid JSON on stdin: {e}. Expected: "
+                '{"response": "...", "residue": "..."}',
+                exit_code=2,
+            )
+            return
+
+    if not response_text and not residue_text:
+        output_error(
+            'Usage: solitaire diarize "response" "residue" '
+            "OR echo '{\"response\":\"...\",\"residue\":\"...\"}' | solitaire diarize -",
+            exit_code=2,
+        )
+        return
+
+    engine = get_engine(ctx)
+    result = engine.diarize(response_text=response_text, residue_text=residue_text)
+    output_json(result)

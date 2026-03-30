@@ -300,6 +300,39 @@ class SolitaireEngine:
         except Exception as e:
             return {"error": f"mark_response failed: {e}"}
 
+    def diarize(self, response_text: str, residue_text: str) -> Dict[str, Any]:
+        """Combined closing-anchor procedure: mark response + write residue.
+
+        This is the format-anchor enforcement mechanism. The closing anchor `-`
+        cannot be written without diarize having fired. Combines mark_response
+        (stores assistant response for deferred ingestion) and write_residue
+        (session texture) into one atomic call.
+
+        Args:
+            response_text: The assistant's full response text.
+            residue_text: Session texture paragraph.
+
+        Returns:
+            Dict with combined status from both operations.
+        """
+        result = {"status": "ok"}
+
+        # Step 1: Mark response (stores for deferred ingestion)
+        if response_text and response_text.strip():
+            mr_result = self.mark_response(response_text)
+            result["mark_response"] = mr_result
+            if "error" in mr_result:
+                result["status"] = "partial"
+
+        # Step 2: Write residue
+        if residue_text and residue_text.strip():
+            res_result = self.write_residue(residue_text)
+            result["residue"] = res_result
+            if res_result.get("status") == "error":
+                result["status"] = "partial"
+
+        return result
+
     # ─── Ingest ───────────────────────────────────────────────────────────
 
     def ingest(
@@ -1759,6 +1792,19 @@ class SolitaireEngine:
                 except Exception as exc:
                     result["scaffolding_warning"] = str(exc)
 
+                # Generate .claude/settings.json from template if it doesn't exist.
+                # This activates the hook architecture for the new user.
+                try:
+                    import shutil
+                    claude_dir = Path(self.workspace_dir) / ".claude"
+                    settings_path = claude_dir / "settings.json"
+                    template_path = claude_dir / "settings.json.template"
+                    if template_path.exists() and not settings_path.exists():
+                        shutil.copy2(str(template_path), str(settings_path))
+                        result["hooks_activated"] = True
+                except Exception:
+                    pass  # Non-fatal; hooks are a bonus, not a blocker
+
             return result
         except Exception as e:
             return {"error": f"Onboarding flow-step error: {e}"}
@@ -2071,11 +2117,15 @@ class SolitaireEngine:
         sections = []
 
         sections.append("# Session Operations\n")
+        # Get persona name for the anchor
+        _anchor_name = self._lib.persona.name if self._lib.persona else "Partner"
         sections.append(
-            "## Per-Turn Protocol\n"
-            "1. Auto-recall before composing each response (from turn 2)\n"
-            "2. Ingest-turn after each exchange\n"
-            "3. Residue write after each ingest-turn\n"
+            "## Format Anchors (MANDATORY, every response)\n"
+            f"OPEN: [{_anchor_name}] on its own line. Prerequisite: auto-recall has fired.\n"
+            "CLOSE: - on its own line. Prerequisite: diarize has fired (mark response + residue).\n"
+            "A response without both anchors is structurally incomplete.\n\n"
+            "Before opening anchor: solitaire auto-recall \"<user message>\"\n"
+            "After composing, before closing anchor: solitaire diarize \"<response>\" \"<residue>\"\n"
         )
 
         # ── Behavioral Genome from Persona ──────────────────────────

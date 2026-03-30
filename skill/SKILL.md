@@ -85,12 +85,12 @@ or equivalent):
 # Session start (first message):
 solitaire boot --persona default --intent "what the user said"
 
-# Before composing each response (turn 2+):
+# Format anchors (every response):
+# OPEN: [{partner_name}] — prerequisite: auto-recall
 solitaire auto-recall "the user's current message"
 
-# After each exchange:
-solitaire ingest-turn "user message" "assistant response"
-solitaire residue write "rolling summary of session texture"
+# CLOSE: - — prerequisite: diarize
+echo '{"response":"your response","residue":"session texture"}' | solitaire diarize -
 
 # Session end:
 solitaire end "what was accomplished"
@@ -112,7 +112,7 @@ into your model's system prompt.
 3. **System prompt injection** -- include Solitaire's boot context block in the
    model's prompt. This is what makes the model aware of past sessions.
 
-4. **Per-turn hook** -- call `ingest-turn` after each user/assistant exchange.
+4. **Per-turn hook** -- call `diarize` after each exchange (combines ingestion + residue).
    Without this, nothing persists.
 
 ## Environment
@@ -175,10 +175,9 @@ Copy this into your agent's instruction file. Adjust paths if needed:
 Run: solitaire boot --persona default --intent "<user's first message>"
 Parse JSON. Read the file at boot_files.context. Inject into system context.
 
-## Per-Turn (every exchange after the first)
-Before responding: solitaire auto-recall "<user's current message>"
-After responding: solitaire ingest-turn "<user msg>" "<assistant msg>"
-After ingesting: solitaire residue write "<session texture paragraph>"
+## Per-Turn (every exchange, including the first)
+Before opening anchor: solitaire auto-recall "<user's current message>"
+After composing, before closing anchor: solitaire diarize "<response>" "<residue>"
 
 ## Session End
 When user signals done: solitaire end "<summary>"
@@ -186,9 +185,9 @@ When user signals done: solitaire end "<summary>"
 
 ### Claude Code Auto-Ingestion Hook
 
-For Claude Code users: instead of relying on the model to call `ingest-turn` after
+For Claude Code users: instead of relying on the model to call `diarize` after
 every response, install the Stop hook from `skill/hooks/claude-code-auto-ingest.py`.
-This reads the session transcript and calls ingest-turn automatically after every
+This reads the session transcript and calls diarize automatically after every
 assistant response. See `skill/references/platforms.md` for setup instructions.
 
 The hook includes deduplication, so it is safe to use alongside the INSTRUCTIONS.md

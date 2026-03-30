@@ -119,32 +119,50 @@ folder for guidance on making the first response count.
 
 ---
 
-## Normal Boot (every session, returning users)
+## Hooks (automatic, code-enforced)
 
-```bash
-solitaire boot --persona <key> --intent "<what the user is working on>"
-```
+Solitaire ships with Claude Code hooks that automate boot, recall, and ingestion.
+These fire as code, not behavioral instructions, giving near-perfect compliance.
 
-**Building the intent signal:** Construct from whatever context is available:
-- The user's first message (highest value, use their exact words)
-- Browser tab titles and URLs visible via MCP (if available)
-- Any other ambient context about what the user is working on
+The hooks live in `.claude/hooks/` and are configured in `.claude/settings.json`.
+If `settings.json` does not exist, copy from `settings.json.template`.
 
-If no signal is available, omit `--intent` entirely. The flag is optional.
+| Hook | Event | What it does |
+|------|-------|-------------|
+| `session-boot.py` | SessionStart | Boots Solitaire, injects full context before first message |
+| `auto-recall.py` | UserPromptSubmit | Runs recall before every response, injects memory context |
+| `auto-ingest.py` | Stop | Ingests last user+assistant exchange after every response |
+| `claim-scanner.py` | Stop | Scans for unverified state claims, writes markers for preflight |
 
-Parse the JSON response. Boot returns a split format:
-- **Thin JSON** (stdout): status, flags, active partner, `boot_files` paths
-- **`boot_files.context`**: Pre-loaded session context. Read this file.
-- **`boot_files.operations`**: Session rules. Read before turn 2.
+**Environment variables (optional):**
+- `SOLITAIRE_WORKSPACE`: Override working directory (default: CWD)
+- `SOLITAIRE_PERSONA`: Persona key to boot (default: first available)
+- `SOLITAIRE_CLAIM_SCANNER`: Set to `0` to disable claim scanning
 
-If the boot JSON contains `"first_turn_briefed": true`:
-1. Parse thin JSON
-2. Read the context file at `boot_files.context`
-3. Respond to the user from the briefing/residue/context in that file.
-   No recall. No other tool calls. Just respond.
-4. Read `boot_files.operations` before your second response.
+**Do NOT call these manually:**
+- `boot`: fires automatically at session start (SessionStart hook)
+- `auto-recall`: fires automatically before every response (UserPromptSubmit hook)
+- `ingest-turn`: fires automatically after every response (Stop hook)
 
-**After compaction or continuation:**
+You will see `[SOLITAIRE AUTO-BOOT COMPLETE]` and `[AUTO-RECALL CONTEXT]` blocks
+injected automatically as system context.
+
+---
+
+## Normal Boot (automatic via hooks)
+
+The SessionStart hook handles boot automatically. It reads `SOLITAIRE_PERSONA`
+to determine which partner to load, falls back to the first available persona.
+
+Boot returns a split format injected as context:
+- **Context**: Pre-loaded session context (persona, residue, briefing, facts)
+- **Tier 2**: Identity, commitments, experiential memory, user knowledge
+- **Operations**: Session rules and behavioral instructions
+
+If the boot context contains briefing data, respond from it directly.
+No recall call needed. No other tool calls. Just respond.
+
+**After compaction or continuation (the ONE case where you boot manually):**
 
 ```bash
 solitaire boot --resume --intent "<what user was working on>"
@@ -152,50 +170,44 @@ solitaire boot --resume --intent "<what user was working on>"
 
 ---
 
-## Per-Turn Cycle (every exchange after the first)
+## Per-Turn Cycle
 
-### Recall (before responding)
+### Persona Label (MANDATORY, every response)
 
-```bash
-solitaire auto-recall "<user's current message>"
-```
+Open every response with `[{partner_name}]` on its own line. This is the persona
+identifier. No closing anchor needed; hooks handle everything else.
 
-Returns relevant memories and preflight checks (intent classification, consistency
-scanning). Use the returned `context_block` to inform your response.
+### Recall (automatic)
+
+The UserPromptSubmit hook fires auto-recall before every response and injects
+the results as system context. You will see `[AUTO-RECALL CONTEXT]` blocks.
 
 If preflight returns `proceed: false`, stop and question the request before executing.
 
-### Mark Response (after responding)
+### Ingestion (automatic)
+
+The Stop hook fires after every response, extracts the last exchange from the
+transcript, and ingests it. Bare acks (< 20 chars) are skipped automatically.
+
+### Residue (periodic, manual)
+
+Residue is not per-turn. Write it at session end or when the exchange changes
+the texture of the session:
 
 ```bash
-solitaire mark-response "<your response>"
+solitaire residue write "<session texture paragraph>"
 ```
 
-For long responses, pipe JSON via stdin:
+### Diarize (manual, when needed)
+
+The `diarize` command still exists for manual use when you need to combine
+mark-response and residue in one call:
 
 ```bash
-echo '{"response":"..."}' | solitaire mark-response -
+echo '{"response":"<response>","residue":"<texture>"}' | solitaire diarize -
 ```
 
-This stores your response in session state. On the next `auto-recall`, Step 0
-automatically finds the complete turn pair (user message queued by previous
-auto-recall + your response from mark-response) and ingests both verbatim.
-The `end` command also flushes any pending pair before closing.
-
-Skip only bare acknowledgments (ok, thanks, got it). Everything else gets marked.
-
-**Note:** `ingest-turn` still exists for manual/batch ingestion, but the standard
-per-turn cycle no longer requires it. Deferred ingestion via auto-recall handles it.
-
-### Residue (after mark-response)
-
-```bash
-solitaire residue write "<paragraph>"
-```
-
-The residue encodes the session's texture: the arc, key moves, emotional register.
-Write it from the session's perspective. Not a summary. Not a todo list.
-Each call overwrites the previous, so it always reflects the full session to date.
+But for the standard per-turn cycle, hooks handle ingestion automatically.
 
 ---
 
@@ -295,18 +307,20 @@ This is not optional. Run the check. Fix violations before sending.
 
 ## Quick Reference
 
-| Operation | Command |
-|-----------|---------|
-| Pre-persona check | `solitaire boot --pre-persona` |
-| Boot | `solitaire boot --persona KEY --intent "..."` |
-| Resume | `solitaire boot --resume --intent "..."` |
-| Recall | `solitaire auto-recall "query"` |
-| Mark Response | `solitaire mark-response "response"` |
-| Ingest (manual) | `solitaire ingest-turn "user" "assistant"` |
-| Remember | `solitaire remember "fact"` |
-| Residue | `solitaire residue write "paragraph"` |
-| End | `solitaire end "summary"` |
-| Health check | `solitaire pulse` |
-| Onboard | `solitaire onboard create` |
-| Onboard step | `solitaire onboard flow-step <id> "<input>"` |
-| Maintain | `solitaire maintain run` |
+| Operation | Command | Auto? |
+|-----------|---------|-------|
+| Boot | `solitaire boot --persona KEY --intent "..."` | Hook |
+| Resume (post-compaction) | `solitaire boot --resume --intent "..."` | Manual |
+| Recall | `solitaire auto-recall "query"` | Hook |
+| Ingest | `solitaire ingest-turn "user" "assistant"` | Hook |
+| Claim scanning | (runs via Stop hook) | Hook |
+| Diarize (manual) | `solitaire diarize "response" "residue"` | Manual |
+| Mark Response (manual) | `solitaire mark-response "response"` | Manual |
+| Remember | `solitaire remember "fact"` | Manual |
+| Residue | `solitaire residue write "paragraph"` | Manual |
+| End | `solitaire end "summary"` | Manual |
+| Health check | `solitaire pulse` | Manual |
+| Pre-persona check | `solitaire boot --pre-persona` | Manual |
+| Onboard | `solitaire onboard create` | Manual |
+| Onboard step | `solitaire onboard flow-step <id> "<input>"` | Manual |
+| Maintain | `solitaire maintain run` | Manual |
