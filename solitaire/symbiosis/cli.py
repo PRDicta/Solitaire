@@ -26,6 +26,8 @@ from typing import Dict, Any, Optional, List
 from .reader_registry import ReaderRegistry
 from .sync_engine import SyncEngine, SyncTier
 from .import_orchestrator import ImportOrchestrator
+from .environment_scanner import scan_environment, ScanResult
+from .priority_ranker import classify_corpus, IngestionPlan
 
 
 def _json_out(data: Any) -> str:
@@ -171,6 +173,117 @@ class AdapterCLI:
             "watchers_stopped": stopped,
         }
 
+    # ── Smart Capture ────────────────────────────────────────────────────
+
+    def cmd_scan(
+        self,
+        workspace: str = "",
+        extra_paths: list = None,
+        own_db: str = "",
+    ) -> Dict[str, Any]:
+        """Scan the environment for existing memory sources.
+
+        Returns detected sources with size estimates and an ingestion plan.
+        No file contents are read, only filesystem metadata.
+        """
+        result = scan_environment(
+            workspace=workspace or None,
+            extra_paths=extra_paths,
+            own_db=own_db or None,
+        )
+
+        output = result.to_dict()
+
+        # Add ingestion plan if sources were found
+        if result.has_sources:
+            plan = classify_corpus(
+                entry_count=result.total_entry_estimate,
+                size_bytes=result.total_size_bytes,
+            )
+            output["ingestion_plan"] = plan.to_dict()
+            output["combined_age_description"] = result.combined_age_description
+            output["total_size_description"] = result.total_size_description
+
+        output["status"] = "ok"
+        return output
+
+    def cmd_capture(
+        self,
+        workspace: str = "",
+        source_ids: list = None,
+        auto: bool = False,
+        chunk_mb: float = 10.0,
+    ) -> Dict[str, Any]:
+        """Run Smart Capture: scan + connect + ingest detected sources.
+
+        This is the high-level command that ties together scanning,
+        source connection, and one-shot import. For use during onboarding
+        or as a standalone command for existing users.
+
+        Args:
+            workspace: Solitaire workspace directory.
+            source_ids: Specific source IDs to capture (None = all detected).
+            auto: Skip consent prompts (for power users / automation).
+            chunk_mb: First-chunk budget in MB for large corpora.
+        """
+        # Step 1: Scan
+        scan = scan_environment(workspace=workspace or None)
+        if not scan.has_sources:
+            return {
+                "status": "ok",
+                "message": "No memory sources detected.",
+                "sources_found": 0,
+            }
+
+        # Filter to requested sources
+        sources = scan.sources
+        if source_ids:
+            sources = [s for s in sources if s.source_id in source_ids]
+            if not sources:
+                return {
+                    "status": "error",
+                    "error": f"None of the requested sources found: {source_ids}",
+                    "available": [s.source_id for s in scan.sources],
+                }
+
+        # Step 2: Connect and import each source
+        results = []
+        for source in sources:
+            # Connect via sync engine
+            connect_result = self.engine.connect(
+                source_id=source.source_id,
+                name=source.display_name,
+                config={"path": source.path},
+                sync_tier=SyncTier.ONE_SHOT,
+            )
+
+            if not connect_result.get("connected"):
+                results.append({
+                    "source": source.source_id,
+                    "status": "error",
+                    "error": connect_result.get("error", "Connection failed"),
+                })
+                continue
+
+            # Import
+            sync_result = self.engine.sync(source.display_name)
+            results.append({
+                "source": source.source_id,
+                "name": source.display_name,
+                "status": sync_result.status,
+                "imported": sync_result.import_result.imported if sync_result.import_result else 0,
+                "skipped": sync_result.import_result.skipped_duplicate if sync_result.import_result else 0,
+                "duration": round(sync_result.duration_seconds, 2),
+            })
+
+        total_imported = sum(r.get("imported", 0) for r in results)
+        return {
+            "status": "ok",
+            "sources_processed": len(results),
+            "total_imported": total_imported,
+            "results": results,
+        }
+
     # ── Dispatch ─────────────────────────────────────────────────────────
 
     def dispatch(self, args: List[str]) -> Dict[str, Any]:
@@ -231,6 +344,17 @@ class AdapterCLI:
         elif cmd == "watch_stop":
             return self.cmd_watch_stop()
 
+        elif cmd == "scan":
+            workspace = args[1] if len(args) > 1 else ""
+            extra = args[2:] if len(args) > 2 else None
+            return self.cmd_scan(workspace=workspace, extra_paths=extra)
+
+        elif cmd == "capture":
+            auto = "--auto" in args
+            clean_args = [a for a in args[1:] if not a.startswith("--")]
+            source_ids = clean_args if clean_args else None
+            return self.cmd_capture(source_ids=source_ids, auto=auto)
+
         elif cmd in ("help", "h"):
             return self._help()
 
@@ -252,6 +376,8 @@ class AdapterCLI:
                 "status": "Show connected sources",
                 "watch-start": "Start live watchers",
                 "watch-stop": "Stop live watchers",
+                "scan [workspace] [extra_paths...]": "Detect memory sources in environment",
+                "capture [source_ids...] [--auto]": "Smart Capture: scan + connect + ingest",
             },
             "sync_tiers": {
                 "one-shot": "Manual import only",

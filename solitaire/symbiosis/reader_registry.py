@@ -107,6 +107,30 @@ class ReaderRegistry:
         except ImportError:
             pass
 
+        # CLAUDE.md / INSTRUCTIONS.md reader
+        try:
+            from .claude_md_reader import ClaudeMdReader
+            self.register(ClaudeMdReader())
+            registered += 1
+        except ImportError:
+            pass
+
+        # Generic markdown knowledge base reader
+        try:
+            from .markdown_kb_reader import MarkdownKBReader
+            self.register(MarkdownKBReader())
+            registered += 1
+        except ImportError:
+            pass
+
+        # Cross-instance Solitaire reader
+        try:
+            from .solitaire_reader import SolitaireReader
+            self.register(SolitaireReader())
+            registered += 1
+        except ImportError:
+            pass
+
         return registered
 
 

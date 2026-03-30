@@ -374,6 +374,13 @@ class OnboardingContext:
     completed_steps: List[str] = field(default_factory=list)
     deferred: bool = False  # True when onboarding was deferred for a task-first user
 
+    # Smart Capture state
+    scan_result: Optional[Dict[str, Any]] = None
+    smart_capture_consent: Optional[str] = None  # "yes", "selective", "skip", "all"
+    smart_capture_sources: List[str] = field(default_factory=list)  # Selected source IDs
+    ingestion_plan: Optional[Dict[str, Any]] = None
+    smart_capture_completed: bool = False
+
     # User inputs
     user_intent: str = ""
     persona_name: str = ""
@@ -532,6 +539,139 @@ class FlowEngine:
                 "auto_advance": True,
                 "quickstart_available": True,
             },
+        )
+
+    def _build_smart_capture(self, ctx: OnboardingContext) -> OnboardingStep:
+        """Build the smart capture step when sources are detected."""
+        scan = ctx.scan_result or {}
+        sources = scan.get("sources", [])
+
+        if not sources:
+            # No sources found, present manual fallback
+            return self._build_smart_capture_manual(ctx)
+
+        # Build source list for display
+        source_summaries = []
+        for s in sources:
+            summary = {
+                "name": s.get("display_name", s.get("source_id", "Unknown")),
+                "entry_count": s.get("entry_count_estimate", 0),
+                "size": s.get("size_description", "unknown"),
+            }
+            if s.get("age_days"):
+                days = s["age_days"]
+                if days < 30:
+                    summary["age"] = f"{days} days"
+                elif days < 365:
+                    summary["age"] = f"{days // 30} months"
+                else:
+                    summary["age"] = f"over {days // 365} year{'s' if days // 365 != 1 else ''}"
+            source_summaries.append(summary)
+
+        total_entries = scan.get("total_entry_estimate", 0)
+        age_desc = scan.get("combined_age_description", "some time")
+        size_desc = scan.get("total_size_description", "")
+        plan = ctx.ingestion_plan or {}
+        strategy = plan.get("strategy", "immediate")
+
+        # Build message based on strategy
+        if strategy == "immediate":
+            message = (
+                f"I can see you've been working with Claude for a while. "
+                f"There's about {age_desc} of context here "
+                f"({total_entries} entries, {size_desc}). "
+                f"Want me to get up to speed before we start?"
+            )
+            options = [
+                {"key": "yes", "label": "Yes, absorb my existing context"},
+                {"key": "selective", "label": "Let me choose which sources to include"},
+                {"key": "skip", "label": "Start fresh, I'll build context from scratch"},
+            ]
+        else:
+            message = (
+                f"I can see you've been working with Claude for {age_desc}. "
+                f"There's a lot here ({total_entries} entries, {size_desc}). "
+                f"I can absorb the highlights now and work through the rest "
+                f"in the background. Sound good?"
+            )
+            options = [
+                {"key": "yes", "label": "Yes, start with the highlights"},
+                {"key": "selective", "label": "Let me choose which sources to include"},
+                {"key": "all", "label": "Absorb everything now (this may take a few minutes)"},
+                {"key": "skip", "label": "Start fresh"},
+            ]
+
+        return OnboardingStep(
+            step_id="smart_capture",
+            step_type="confirm",
+            title="Existing Context Detected",
+            description="Found existing memory data on this machine.",
+            content={
+                "message": message,
+                "sources": source_summaries,
+                "options": options,
+                "default": "yes",
+                "ingestion_plan": plan,
+            },
+            expected_input_type="choice_key",
+            next_steps="intent_capture",
+            metadata={
+                "strategy": strategy,
+                "source_count": len(sources),
+                "total_entries": total_entries,
+            },
+        )
+
+    def _build_smart_capture_manual(self, ctx: OnboardingContext) -> OnboardingStep:
+        """Build the manual fallback when no sources are auto-detected."""
+        return OnboardingStep(
+            step_id="smart_capture_manual",
+            step_type="question",
+            title="Existing Context",
+            description="Check for existing memory data.",
+            content={
+                "message": (
+                    "Do you have an existing memory system you'd like me "
+                    "to connect to? If so, point me to the folder or file "
+                    "and I'll get up to speed."
+                ),
+                "options": [
+                    {"key": "path", "label": "Yes, here's where it lives"},
+                    {"key": "skip", "label": "No, let's start fresh"},
+                ],
+                "default": "skip",
+                "accepts_path": True,
+            },
+            expected_input_type="text",
+            next_steps="intent_capture",
+        )
+
+    def _build_smart_capture_selective(self, ctx: OnboardingContext) -> OnboardingStep:
+        """Build the selective source picker."""
+        scan = ctx.scan_result or {}
+        sources = scan.get("sources", [])
+
+        options = []
+        for s in sources:
+            name = s.get("display_name", s.get("source_id", "Unknown"))
+            count = s.get("entry_count_estimate", 0)
+            options.append({
+                "key": s.get("source_id", "unknown"),
+                "label": f"{name} ({count} entries)",
+                "default": True,
+            })
+
+        return OnboardingStep(
+            step_id="smart_capture_selective",
+            step_type="multiple_choice",
+            title="Choose Sources",
+            description="Select which sources to absorb.",
+            content={
+                "message": "Which sources should I absorb?",
+                "options": options,
+            },
+            expected_input_type="multi_select",
+            next_steps="intent_capture",
         )
 
     def _build_intent_capture(self, ctx: OnboardingContext) -> OnboardingStep:
@@ -1108,6 +1248,12 @@ class FlowEngine:
 
         if step_id == "welcome":
             return self._build_welcome(ctx)
+        elif step_id == "smart_capture":
+            return self._build_smart_capture(ctx)
+        elif step_id == "smart_capture_manual":
+            return self._build_smart_capture_manual(ctx)
+        elif step_id == "smart_capture_selective":
+            return self._build_smart_capture_selective(ctx)
         elif step_id == "intent_capture":
             return self._build_intent_capture(ctx)
         elif step_id == "intent_followup":
@@ -1199,6 +1345,56 @@ class FlowEngine:
             return ctx
 
         if step_id == "welcome":
+            # After welcome, run environment scan and route to smart capture
+            # The scan_result should be set on ctx by the caller (CLI or agent)
+            # before calling process_input, or we route to smart_capture which
+            # handles both detected and manual-fallback paths.
+            ctx.current_step = "smart_capture"
+
+        elif step_id == "smart_capture":
+            choice = input_str
+            ctx.smart_capture_consent = choice
+            if choice == "yes" or choice == "all":
+                # Consent given. The caller (CLI/agent) should run ingestion
+                # using the scan_result and ingestion_plan on ctx.
+                # Mark all detected sources as selected.
+                scan = ctx.scan_result or {}
+                ctx.smart_capture_sources = [
+                    s.get("source_id", "") for s in scan.get("sources", [])
+                ]
+                ctx.smart_capture_completed = True
+                ctx.current_step = "intent_capture"
+            elif choice == "selective":
+                ctx.current_step = "smart_capture_selective"
+            elif choice == "skip":
+                ctx.smart_capture_completed = True
+                ctx.current_step = "intent_capture"
+            else:
+                ctx.current_step = "intent_capture"
+
+        elif step_id == "smart_capture_manual":
+            choice = input_str
+            if choice == "skip" or choice == "no":
+                ctx.smart_capture_completed = True
+                ctx.current_step = "intent_capture"
+            else:
+                # User provided a path. Store it for the caller to scan + ingest.
+                ctx.smart_capture_sources = [choice]
+                ctx.smart_capture_consent = "path"
+                ctx.smart_capture_completed = True
+                ctx.current_step = "intent_capture"
+
+        elif step_id == "smart_capture_selective":
+            # input_data should be a list of selected source IDs or a
+            # comma-separated string
+            if isinstance(input_data, list):
+                ctx.smart_capture_sources = input_data
+            elif isinstance(input_data, str):
+                ctx.smart_capture_sources = [
+                    s.strip() for s in input_data.split(",") if s.strip()
+                ]
+            ctx.smart_capture_consent = "selective"
+            ctx.smart_capture_completed = True
             ctx.current_step = "intent_capture"
 
         elif step_id == "intent_capture":
