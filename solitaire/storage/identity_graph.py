@@ -953,7 +953,7 @@ class IdentityGraph:
         def _resonance_suffix(node) -> str:
             """Append resonance line from metadata if present."""
             meta = node.metadata if isinstance(node.metadata, dict) else {}
-            rl = meta.get("resonance_line")
+            rl = meta.get("texture")
             return f"\n  ~ {rl}" if rl else ""
 
         # North Star (always first, always present if it exists)
