@@ -1792,6 +1792,19 @@ class SolitaireEngine:
                 except Exception as exc:
                     result["scaffolding_warning"] = str(exc)
 
+                # Generate .claude/settings.json from template if it doesn't exist.
+                # This activates the hook architecture for the new user.
+                try:
+                    import shutil
+                    claude_dir = Path(self.workspace_dir) / ".claude"
+                    settings_path = claude_dir / "settings.json"
+                    template_path = claude_dir / "settings.json.template"
+                    if template_path.exists() and not settings_path.exists():
+                        shutil.copy2(str(template_path), str(settings_path))
+                        result["hooks_activated"] = True
+                except Exception:
+                    pass  # Non-fatal; hooks are a bonus, not a blocker
+
             return result
         except Exception as e:
             return {"error": f"Onboarding flow-step error: {e}"}
