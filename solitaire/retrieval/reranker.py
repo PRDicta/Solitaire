@@ -622,7 +622,10 @@ class Reranker:
                 # Conflict found: suppress the older entry
                 entry_i = scan_set[i].entry
                 entry_j = scan_set[j].entry
-                older_idx = i if self._entry_is_older(entry_i, entry_j) else j
+                age_result = self._entry_is_older(entry_i, entry_j)
+                if age_result is None:
+                    continue  # Indeterminate age: suppress neither
+                older_idx = i if age_result else j
                 suppressed_ids.add(scan_set[older_idx].entry.id)
 
         if not suppressed_ids:
@@ -643,11 +646,11 @@ class Reranker:
         ) is not None
 
     @staticmethod
-    def _entry_is_older(a: RolodexEntry, b: RolodexEntry) -> bool:
-        """Return True if entry a is older than entry b."""
+    def _entry_is_older(a: RolodexEntry, b: RolodexEntry):
+        """Return True if a is older than b, False if b is older, None if indeterminate."""
         try:
             time_a = a.created_at.timestamp() if hasattr(a.created_at, 'timestamp') else float(a.created_at)
             time_b = b.created_at.timestamp() if hasattr(b.created_at, 'timestamp') else float(b.created_at)
             return time_a < time_b
         except (TypeError, ValueError, AttributeError):
-            return False  # Can't determine; don't suppress either
+            return None  # Indeterminate: caller must handle

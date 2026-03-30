@@ -32,7 +32,7 @@ Solitaire gives agents persistent memory, persistent identity, and persistent be
 | Accumulated memory entries | 14,000+ |
 | Precision@3 improvement | 80% → 100% |
 | Persona trait alignment | 2.25/5 → 4.43/5 |
-| Dify integration | Shipped |
+| Dify integration | Prototype complete (available separately) |
 | Claude Code / Cowork usage | Production |
 | Supporting research papers | 2 |
 
@@ -42,7 +42,7 @@ Solitaire gives agents persistent memory, persistent identity, and persistent be
 
 **Self-correcting retrieval.** Solitaire tracks which retrieved memories actually prove useful in responses and adjusts weighting over time. Entries that help get surfaced more. Entries that don't fade back. The retrieval system calibrates itself without being told what "right" means.
 
-**Self-healing knowledge graph.** A 13-pass maintenance engine runs during idle time to keep the knowledge graph accurate. It detects contradictions between entries (numeric, preference, negation), recalculates confidence for stale entries, links entities across documents, consolidates identity signals, and generates retrieval biases from cross-session patterns. Contradictions detected at ingestion time are stored for user resolution. The same conflict detection heuristics operate at both ingestion and retrieval, so the system catches inconsistencies on the way in and on the way out.
+**Self-healing knowledge graph.** A maintenance engine runs during idle time to keep the knowledge graph accurate. It detects contradictions between entries (numeric, preference, negation), recalculates confidence for stale entries, links entities across documents, and consolidates identity signals. Contradictions detected at ingestion time are stored for user resolution. The same conflict detection heuristics operate at both ingestion and retrieval, so the system catches inconsistencies on the way in and on the way out.
 
 **Local-first by default.** The memory engine runs locally. Storage stays in SQLite and JSONL inside your workspace. No cloud dependency for the core system. Your data never leaves your machine.
 
@@ -140,7 +140,7 @@ Solitaire is for developers who want agents to feel continuous across time.
 | Hermes | SKILL.md (native format) | Compatible |
 | OpenClaw | SKILL.md (native format) | Compatible |
 | Gemini CLI | SKILL.md compatible | Compatible |
-| Dify | Plugin (5 tools, marketplace-ready) | Shipped |
+| Dify | Plugin (5 tools) | Prototype complete |
 
 ## External memory import (symbiosis adapter)
 
@@ -194,7 +194,7 @@ The minimum viable loop: boot once, ingest every turn, end once.
 ```
 Host Agent (Claude, Gemini, custom LLM, etc.)
     │
-    ├── CLI (solitaire command, 53 commands)
+    ├── CLI (solitaire command, 34 commands)
     ├── Python API (SolitaireEngine class)
     ├── Skill manifest (SKILL.md for Hermes/OpenClaw/Gemini)
     └── Dify plugin (5 tool nodes)
