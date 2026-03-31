@@ -184,11 +184,18 @@ def main():
     transcript_ctx = _extract_transcript_context(transcript_path)
 
     # Run the scan
-    result = scan(assistant_text, config, persona_traits, transcript_ctx)
+    try:
+        result = scan(assistant_text, config, persona_traits, transcript_ctx)
 
-    if result.has_violations():
-        marker_data = result.to_marker_dict()
-        write_marker(marker_data["violations"], persona_key, workspace)
+        if result.has_violations():
+            marker_data = result.to_marker_dict()
+            write_marker(marker_data["violations"], persona_key, workspace)
+    except Exception as e:
+        try:
+            from hook_errors import log_hook_error
+            log_hook_error("writing-gate", str(e)[:200])
+        except Exception:
+            pass
 
     sys.exit(0)
 

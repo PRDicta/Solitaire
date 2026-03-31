@@ -205,9 +205,16 @@ def main():
     if not assistant_text:
         sys.exit(0)
 
-    claims = scan_for_claims(assistant_text)
-    if claims:
-        write_marker(claims)
+    try:
+        claims = scan_for_claims(assistant_text)
+        if claims:
+            write_marker(claims)
+    except Exception as e:
+        try:
+            from hook_errors import log_hook_error
+            log_hook_error("claim-scanner", str(e)[:200])
+        except Exception:
+            pass
 
     sys.exit(0)
 

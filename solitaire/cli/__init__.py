@@ -243,6 +243,81 @@ def backup_top(ctx, force, list_backups):
     _json_output(result)
 
 
+@cli.command("restore")
+@click.argument("backup_file", required=False)
+@click.option("--latest", is_flag=True, help="Restore from the most recent backup")
+@click.pass_context
+def restore_top(ctx, backup_file, latest):
+    """Restore database and personas from a backup snapshot."""
+    from pathlib import Path
+    from ..storage.backup import BackupManager
+    from ..utils.config import LibrarianConfig
+
+    workspace = Path(ctx.obj.get("workspace", os.getcwd()))
+    config = LibrarianConfig()
+    bm = BackupManager.from_config(workspace, config)
+
+    if latest:
+        backup_path = bm.latest_backup()
+        if not backup_path:
+            _json_output({"status": "error", "reason": "no_backups_found"})
+            return
+    elif backup_file:
+        backup_path = Path(backup_file)
+        if not backup_path.is_absolute():
+            backup_path = workspace / "backups" / backup_file
+    else:
+        # List available and prompt
+        backups = bm.list_backups()
+        if not backups:
+            _json_output({"status": "error", "reason": "no_backups_found"})
+            return
+        _json_output({
+            "status": "select",
+            "message": "Specify a backup file or use --latest",
+            "available": backups,
+        })
+        return
+
+    result = bm.restore_from_backup(backup_path)
+    _json_output(result)
+
+
+@cli.command("rebuild-index")
+@click.pass_context
+def rebuild_index_top(ctx):
+    """Rebuild all FTS indexes from source tables."""
+    from pathlib import Path
+    import sqlite3
+    from ..storage.fts_rebuild import rebuild_all_fts
+    from ..storage.backup import BackupManager
+    from ..utils.config import LibrarianConfig
+
+    workspace = Path(ctx.obj.get("workspace", os.getcwd()))
+    config = LibrarianConfig()
+
+    # Pre-operation safety backup
+    bm = BackupManager.from_config(workspace, config)
+    safety = bm.create_backup(
+        timestamp=__import__("datetime").datetime.now(
+            __import__("datetime").timezone.utc
+        ).strftime("pre_rebuild_%Y%m%d_%H%M%S_%f")
+    )
+
+    db_path = workspace / config.db_path
+    if not db_path.exists():
+        _json_output({"status": "error", "reason": "no_database"})
+        return
+
+    conn = sqlite3.connect(str(db_path))
+    conn.row_factory = sqlite3.Row
+    result = rebuild_all_fts(conn)
+    conn.close()
+
+    result["safety_backup"] = safety.get("path")
+    _json_output(result)
+
+
 @cli.command("pulse")
 @click.pass_context
 def pulse_top(ctx):

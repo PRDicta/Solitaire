@@ -59,8 +59,12 @@ def parse_semver(version_str: str) -> Tuple[int, ...]:
     return (int(parts.group(1)), int(parts.group(2)), int(parts.group(3)))
 
 
-def _run_git(args: List[str], cwd: Path, timeout: int = 60) -> subprocess.CompletedProcess:
-    """Run a git command and return the result."""
+def _run_git(args: List[str], cwd: Path, timeout: int = 30) -> subprocess.CompletedProcess:
+    """Run a git command and return the result.
+
+    Default timeout is 30s for local operations. Network-bound calls
+    (fetch, clone) should pass timeout=15 explicitly.
+    """
     return subprocess.run(
         ["git"] + args,
         capture_output=True,
@@ -215,7 +219,7 @@ class UpdateChecker:
             fetch = _run_git(
                 ["fetch", "origin", "--tags", "--force"],
                 cwd=self.workspace,
-                timeout=120,
+                timeout=15,
             )
             if fetch.returncode != 0:
                 result["message"] = f"git fetch failed: {fetch.stderr.strip()}"
@@ -258,7 +262,7 @@ class UpdateChecker:
             pip_result = subprocess.run(
                 [sys.executable, "-m", "pip", "install", "-e",
                  str(self.workspace), "--break-system-packages", "-q"],
-                capture_output=True, text=True, timeout=120,
+                capture_output=True, text=True, timeout=60,
             )
             if pip_result.returncode == 0:
                 result["steps"].append("pip_installed")

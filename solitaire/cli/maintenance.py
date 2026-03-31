@@ -4,6 +4,9 @@ Maintenance commands — system upkeep and health checks.
 Commands:
     solitaire maintenance run
 """
+import os
+from pathlib import Path
+
 import click
 
 from ._engine import get_engine, output_json, output_error
@@ -56,6 +59,7 @@ def maintain_run(ctx, full):
             conn=conn,
             session_id=engine._session_id,
             token_budget=15000,
+            workspace=Path(ctx.obj.get("workspace", os.getcwd())),
         )
         consolidation_result = me.run_all()
         results["consolidation"] = consolidation_result.get("summary", {})

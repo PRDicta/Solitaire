@@ -176,10 +176,12 @@ class MaintenanceEngine:
         max_entries_per_pass: int = 200,
         stale_threshold_hours: float = 48.0,
         similarity_threshold: float = 0.85,
+        workspace: Optional["Path"] = None,
     ):
         self.conn = conn
         self.session_id = session_id
         self.token_budget = token_budget
+        self._workspace = workspace
         self.tokens_used = 0
         self.max_entries_per_pass = max_entries_per_pass
         self.stale_threshold_hours = stale_threshold_hours
@@ -1809,9 +1811,25 @@ class MaintenanceEngine:
         """
         Run all maintenance passes in order, respecting the token budget.
 
+        Creates a safety backup before any destructive operations.
         Returns a comprehensive report.
         """
         ensure_maintenance_schema(self.conn)
+
+        # Pre-operation safety backup
+        safety_backup = None
+        if self._workspace:
+            try:
+                from ..storage.backup import BackupManager
+                from ..utils.config import LibrarianConfig
+                config = LibrarianConfig()
+                bm = BackupManager.from_config(self._workspace, config)
+                ts = datetime.now(timezone.utc).strftime("pre_maintain_%Y%m%d_%H%M%S_%f")
+                result = bm.create_backup(timestamp=ts)
+                if result.get("status") == "ok":
+                    safety_backup = result.get("path")
+            except Exception:
+                pass  # Non-fatal: maintenance proceeds without backup
 
         log_id = str(uuid.uuid4())
         started_at = datetime.now(timezone.utc).isoformat()
@@ -1931,4 +1949,5 @@ class MaintenanceEngine:
                 "total_actions": total_actions,
             },
             "actions": self.actions,
+            "safety_backup": safety_backup,
         }

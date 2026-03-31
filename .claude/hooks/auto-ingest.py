@@ -115,7 +115,7 @@ def main():
     })
 
     try:
-        subprocess.run(
+        result = subprocess.run(
             ["solitaire", "ingest-turn", "-"],
             input=ingest_payload,
             capture_output=True,
@@ -125,8 +125,15 @@ def main():
             timeout=30,
             cwd=WORKSPACE,
         )
-    except Exception:
-        pass  # Don't block the session on ingest failure
+        if result.returncode != 0:
+            from hook_errors import log_hook_error
+            log_hook_error("auto-ingest", f"exit {result.returncode}: {result.stderr[:200]}")
+    except Exception as e:
+        try:
+            from hook_errors import log_hook_error
+            log_hook_error("auto-ingest", str(e)[:200])
+        except Exception:
+            pass
 
     sys.exit(0)
 
