@@ -28,7 +28,18 @@ try:
         cwd=WORKSPACE,
     )
     stdout = result.stdout
-except Exception:
+    if result.returncode != 0:
+        try:
+            from hook_errors import log_hook_error
+            log_hook_error("session-boot", f"exit {result.returncode}: {result.stderr[:200]}")
+        except Exception:
+            pass
+except Exception as e:
+    try:
+        from hook_errors import log_hook_error
+        log_hook_error("session-boot", str(e)[:200])
+    except Exception:
+        pass
     sys.exit(0)
 
 # If no persona was set, try to extract the first available and boot it

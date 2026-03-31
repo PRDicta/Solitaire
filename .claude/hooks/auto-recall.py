@@ -44,9 +44,22 @@ def main():
             cwd=WORKSPACE,
         )
         stdout = result.stdout.strip()
+        if result.returncode != 0:
+            from hook_errors import log_hook_error
+            log_hook_error("auto-recall", f"exit {result.returncode}: {result.stderr[:200]}")
     except subprocess.TimeoutExpired:
+        try:
+            from hook_errors import log_hook_error
+            log_hook_error("auto-recall", "timed out after 25s")
+        except Exception:
+            pass
         sys.exit(0)
-    except Exception:
+    except Exception as e:
+        try:
+            from hook_errors import log_hook_error
+            log_hook_error("auto-recall", str(e)[:200])
+        except Exception:
+            pass
         sys.exit(0)
 
     if not stdout:
@@ -118,6 +131,16 @@ def main():
             parts.append("[AUTO-RECALL] briefing_covers: respond from boot context.")
         else:
             sys.exit(0)
+
+    # Surface any recent hook errors as a visible cue
+    try:
+        from hook_errors import read_and_clear_latest
+        hook_warning = read_and_clear_latest()
+        if hook_warning:
+            parts.insert(0, hook_warning)
+            parts.insert(1, "")
+    except Exception:
+        pass
 
     context = "\n".join(parts)
 

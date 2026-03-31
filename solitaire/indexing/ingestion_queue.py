@@ -12,14 +12,24 @@ Architecture:
 
 Workers pause when a query arrives (retrieval takes priority) and
 resume once the search completes.
+
+Crash recovery:
+    A write-ahead journal (.solitaire/queue-journal.jsonl) tracks
+    in-flight tasks. On clean drain the journal is truncated. On next
+    boot, orphaned entries are replayed into the queue.
 """
 import asyncio
+import logging
+import os
 import uuid
 import json
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import List, Dict, Optional, Callable, Awaitable, Any
 from datetime import datetime, timezone
 from enum import Enum
+
+logger = logging.getLogger(__name__)
 
 from ..core.types import (
     RolodexEntry, Message, ContentModality, EntryCategory, Tier
@@ -50,6 +60,86 @@ class IngestionTask:
     error: Optional[str] = None
 
 
+class QueueJournal:
+    """Write-ahead journal for crash recovery.
+
+    Before a task is processed, its ID is written to the journal.
+    On completion (success or failure), the entry is removed.
+    On clean shutdown, the journal is truncated.
+    On next boot, any remaining entries are orphans that need replay.
+    """
+
+    def __init__(self, workspace: Optional[Path] = None):
+        ws = workspace or Path(os.environ.get("SOLITAIRE_WORKSPACE", os.getcwd()))
+        self._dir = ws / ".solitaire"
+        self._path = self._dir / "queue-journal.jsonl"
+
+    def _ensure_dir(self) -> None:
+        self._dir.mkdir(parents=True, exist_ok=True)
+
+    def record_inflight(self, task: "IngestionTask") -> None:
+        """Write a task to the journal before processing."""
+        try:
+            self._ensure_dir()
+            entry = {
+                "id": task.id,
+                "stub_entry_ids": task.stub_entry_ids,
+                "conversation_id": task.conversation_id,
+                "turn_number": task.turn_number,
+                "ts": datetime.now(timezone.utc).isoformat(),
+            }
+            with open(self._path, "a", encoding="utf-8") as f:
+                f.write(json.dumps(entry) + "\n")
+        except Exception:
+            pass  # Journal failure must never block ingestion
+
+    def record_complete(self, task_id: str) -> None:
+        """Remove a completed task from the journal."""
+        try:
+            if not self._path.exists():
+                return
+            lines = self._path.read_text(encoding="utf-8").splitlines()
+            remaining = []
+            for line in lines:
+                if not line.strip():
+                    continue
+                try:
+                    entry = json.loads(line)
+                    if entry.get("id") != task_id:
+                        remaining.append(line)
+                except json.JSONDecodeError:
+                    pass
+            self._path.write_text("\n".join(remaining) + "\n" if remaining else "", encoding="utf-8")
+        except Exception:
+            pass
+
+    def get_orphans(self) -> List[Dict[str, Any]]:
+        """Return tasks that were in-flight when the process died."""
+        try:
+            if not self._path.exists():
+                return []
+            orphans = []
+            for line in self._path.read_text(encoding="utf-8").splitlines():
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    orphans.append(json.loads(line))
+                except json.JSONDecodeError:
+                    pass
+            return orphans
+        except Exception:
+            return []
+
+    def truncate(self) -> None:
+        """Clear the journal on clean shutdown."""
+        try:
+            if self._path.exists():
+                self._path.write_text("", encoding="utf-8")
+        except Exception:
+            pass
+
+
 class IngestionQueue:
     """
     Async queue with background workers for enrichment tasks.
@@ -77,11 +167,13 @@ class IngestionQueue:
         num_workers: int = 2,
         max_queue_size: int = 1000,
         pause_on_query: bool = True,
+        workspace: Optional[Path] = None,
     ):
         self._queue: asyncio.Queue = asyncio.Queue(maxsize=max_queue_size)
         self._enrichment_fn = enrichment_fn
         self._num_workers = num_workers
         self._pause_on_query = pause_on_query
+        self._journal = QueueJournal(workspace)
 
         # Worker management
         self._workers: List[asyncio.Task] = []
@@ -98,10 +190,28 @@ class IngestionQueue:
     # ─── Lifecycle ────────────────────────────────────────────────────────
 
     async def start(self) -> None:
-        """Start background workers."""
+        """Start background workers. Replays orphaned journal entries."""
         if self._running:
             return
         self._running = True
+
+        # Replay orphaned tasks from previous crash
+        orphans = self._journal.get_orphans()
+        if orphans:
+            logger.info("Replaying %d orphaned ingestion tasks", len(orphans))
+            for entry in orphans:
+                task = IngestionTask(
+                    id=entry.get("id", str(uuid.uuid4())),
+                    stub_entry_ids=entry.get("stub_entry_ids", []),
+                    conversation_id=entry.get("conversation_id", ""),
+                    turn_number=entry.get("turn_number", 0),
+                )
+                try:
+                    self._queue.put_nowait(task)
+                    self._pending_count += 1
+                except asyncio.QueueFull:
+                    logger.warning("Queue full, dropping orphan %s", task.id)
+
         self._workers = [
             asyncio.create_task(self._worker(i))
             for i in range(self._num_workers)
@@ -112,6 +222,7 @@ class IngestionQueue:
         # Drain pending work before signaling stop (prevents task loss)
         self._paused.set()  # Unpause so workers can process
         await self.wait_for_drain(timeout=15.0)
+        self._journal.truncate()
         self._running = False
         # Send poison pills
         for _ in self._workers:
@@ -219,6 +330,7 @@ class IngestionQueue:
                 task.status = TaskStatus.PROCESSING
                 self._pending_count = max(0, self._pending_count - 1)
                 self._processing_count += 1
+                self._journal.record_inflight(task)
 
                 try:
                     if self._enrichment_fn:
@@ -231,6 +343,7 @@ class IngestionQueue:
                     task.error = str(e)
                     self._failed_count += 1
                 finally:
+                    self._journal.record_complete(task.id)
                     self._processing_count = max(0, self._processing_count - 1)
                     self._queue.task_done()
 

@@ -260,6 +260,95 @@ class BackupManager:
         result["personas"] = persona_result
         return result
 
+    def get_matching_persona_backup(self, db_backup_path: Path) -> Optional[Path]:
+        """Find the persona backup with the same timestamp as a DB backup.
+
+        Extracts the timestamp from the DB backup filename and looks for
+        a matching personas_ directory.
+        """
+        # Extract timestamp: rolodex_YYYYMMDD_HHMMSS_FFFFFF.db
+        name = db_backup_path.name
+        ts = name.replace(self.BACKUP_PREFIX, "").replace(self.BACKUP_SUFFIX, "")
+        persona_dir = self.backup_dir / f"{self.PERSONA_PREFIX}{ts}"
+        if persona_dir.exists() and persona_dir.is_dir():
+            return persona_dir
+        return None
+
+    def restore_from_backup(self, backup_path: Path) -> Dict[str, Any]:
+        """Restore rolodex.db and personas/ from a backup snapshot.
+
+        Creates a safety snapshot of the current state before restoring.
+        Rebuilds FTS indexes after restore.
+
+        Args:
+            backup_path: Path to the .db backup file.
+
+        Returns:
+            Dict with status, safety_backup, restored files, and FTS rebuild result.
+        """
+        result: Dict[str, Any] = {
+            "status": "error",
+            "message": "",
+            "safety_backup": None,
+            "restored_db": False,
+            "restored_personas": False,
+            "fts_rebuild": None,
+        }
+
+        if not backup_path.exists():
+            result["message"] = f"Backup file not found: {backup_path}"
+            return result
+
+        # Step 1: Safety snapshot of current state
+        safety_ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S_%f")
+        safety = self.create_backup(timestamp=f"pre_restore_{safety_ts}")
+        self.create_persona_backup(timestamp=f"pre_restore_{safety_ts}")
+        result["safety_backup"] = safety.get("path")
+
+        # Step 2: Restore database
+        try:
+            source = sqlite3.connect(str(backup_path))
+            dest = sqlite3.connect(str(self.db_path))
+            try:
+                source.backup(dest)
+            finally:
+                dest.close()
+                source.close()
+            result["restored_db"] = True
+            logger.info("Restored database from %s", backup_path.name)
+        except Exception as e:
+            result["message"] = f"Database restore failed: {e}"
+            return result
+
+        # Step 3: Restore personas if matching backup exists
+        persona_backup = self.get_matching_persona_backup(backup_path)
+        if persona_backup:
+            persona_dir = self._persona_dir()
+            try:
+                if persona_dir.exists():
+                    shutil.rmtree(persona_dir)
+                shutil.copytree(persona_backup, persona_dir)
+                result["restored_personas"] = True
+                logger.info("Restored personas from %s", persona_backup.name)
+            except Exception as e:
+                result["message"] = f"Persona restore failed (DB was restored): {e}"
+                return result
+
+        # Step 4: Rebuild FTS indexes
+        try:
+            conn = sqlite3.connect(str(self.db_path))
+            conn.row_factory = sqlite3.Row
+            from .fts_rebuild import rebuild_all_fts
+            fts_result = rebuild_all_fts(conn)
+            conn.close()
+            result["fts_rebuild"] = fts_result
+        except Exception as e:
+            result["fts_rebuild"] = {"status": "error", "reason": str(e)}
+
+        result["status"] = "ok"
+        result["message"] = "Restore complete"
+        return result
+
     def list_backups(self) -> List[Dict[str, Any]]:
         """Return available backups with metadata, newest-first."""
         files = self._backup_files()
