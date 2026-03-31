@@ -1698,6 +1698,9 @@ class SolitaireEngine:
         """
         Start the v2.0 onboarding flow for persona creation.
 
+        Runs an environment scan before the first step so that
+        smart_capture can show detected sources automatically.
+
         Args:
             intent: Optional user intent to pre-fill.
 
@@ -1709,6 +1712,29 @@ class SolitaireEngine:
 
             engine = FlowEngine(templates_dir=str(self.persona_dir.parent / "persona_templates"))
             ctx = OnboardingContext()
+
+            # Run environment scan so smart_capture sees detected sources
+            try:
+                from .symbiosis.environment_scanner import scan_environment
+                from .symbiosis.priority_ranker import classify_corpus
+
+                scan = scan_environment(
+                    workspace=str(self.workspace_dir),
+                    own_db=str(self.workspace_dir / "rolodex.db"),
+                )
+                if scan.has_sources:
+                    scan_dict = scan.to_dict()
+                    scan_dict["combined_age_description"] = scan.combined_age_description
+                    scan_dict["total_size_description"] = scan.total_size_description
+                    ctx.scan_result = scan_dict
+
+                    plan = classify_corpus(
+                        entry_count=scan.total_entry_estimate,
+                        size_bytes=scan.total_size_bytes,
+                    )
+                    ctx.ingestion_plan = plan.to_dict()
+            except Exception:
+                pass  # Scan failure should not block onboarding
 
             if intent:
                 ctx.user_intent = intent
