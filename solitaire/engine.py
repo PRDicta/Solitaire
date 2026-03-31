@@ -591,8 +591,8 @@ class SolitaireEngine:
             write_residue(
                 conn=self._lib.rolodex.conn,
                 session_id=self._session_id,
+                residue_text=text,
                 persona_key=self._persona_key or "",
-                text=text,
             )
             return {
                 "status": "ok",
