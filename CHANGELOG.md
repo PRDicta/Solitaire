@@ -3,6 +3,13 @@
 All notable changes to Solitaire are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/).
 
+## [1.4.1] - 2026-03-31
+
+### Fixed
+- First-turn auto-recall skip removed: recall now always fires on turn one. The previous `briefing_covers` heuristic silently bypassed the entire recall pipeline when the first message didn't contain back-reference patterns (e.g. "continue where we left off"). This caused domain-specific context (production rules, compliance checklists, operational knowledge) to never surface, resulting in sessions running without guardrails.
+- CLAUDE.md updated: removed "respond from boot context directly" instruction that reinforced the skip behavior. Replaced with explicit guidance to use both boot context and auto-recall context together.
+- Hook cleanup: removed dead `briefing_covers` output path from auto-recall hook.
+
 ## [1.4.0] - 2026-03-29
 
 ### Added

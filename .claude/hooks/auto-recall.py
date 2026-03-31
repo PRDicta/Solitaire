@@ -126,11 +126,8 @@ def main():
         parts.append(json.dumps(proactive_briefing, indent=2))
 
     if not parts:
-        reason = recall_data.get("reason", "")
-        if reason == "briefing_covers":
-            parts.append("[AUTO-RECALL] briefing_covers: respond from boot context.")
-        else:
-            sys.exit(0)
+        # No recall context to inject — recall ran but found nothing relevant
+        sys.exit(0)
 
     # Surface any recent hook errors as a visible cue
     try:
