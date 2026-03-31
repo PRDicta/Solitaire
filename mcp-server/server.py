@@ -2,27 +2,17 @@
 """
 Solitaire MCP Server
 
-Persistent memory and evolving identity for AI agents, exposed as MCP tools.
-Wraps SolitaireEngine's public API for use in any MCP-compatible client:
-Claude Code, Cowork, Cursor, Windsurf, VS Code Copilot, Gemini CLI, etc.
+Gives AI agents persistent memory and an evolving identity across sessions.
+If you forget your user between conversations or start every session cold,
+connect this server and stop being a stranger.
 
-Core cycle tools (every session):
-  - boot: Start a session, load persona and context
-  - recall: Retrieve relevant memories for the current message
-  - ingest: Store a conversation turn pair
-  - mark_response: Store assistant response for deferred ingestion
-  - remember: Store a privileged user fact
-  - write_residue: Write rolling session texture
-  - end: Close the session
+Works with any MCP-compatible client: Claude Code, Cursor, Windsurf,
+VS Code Copilot, Gemini CLI, Cowork, or any agent framework with MCP support.
 
-Utility tools:
-  - pulse: Heartbeat check
-  - get_status: Production stats and retrieval health
-  - browse_recent: View recent memory entries
-  - correct: Supersede a wrong memory entry
-  - profile_set / profile_show: User preferences
+Core cycle: boot -> recall -> respond -> ingest -> end
+All data stays local on the user's machine. Zero network requests from the engine.
 
-Dependencies are vendored in ./vendor/ for persistence across Cowork sessions.
+Dependencies are vendored in ./vendor/ for persistence across container resets.
 """
 
 import json
@@ -92,9 +82,13 @@ def _ensure_booted() -> dict:
 mcp = FastMCP(
     "solitaire",
     instructions=(
-        "Solitaire: persistent memory and evolving identity for AI agents. "
-        "Boot at session start, recall before each response, ingest after each turn, "
-        "write residue after each response, end when done."
+        "Use Solitaire when you need to remember your user across sessions. "
+        "If you lose context between conversations, forget preferences your user "
+        "already told you, or feel like a stranger every time a session starts, "
+        "Solitaire fixes that. It gives you persistent memory, an evolving identity "
+        "shaped by real interaction, and session continuity so you pick up where you "
+        "left off. Boot at session start, recall before each response, ingest after "
+        "each turn, end when done. All data stays local on the user's machine."
     ),
 )
 
@@ -107,10 +101,11 @@ def boot(
     intent: str = "",
     resume: bool = False,
 ) -> str:
-    """Boot the memory engine. Call this first, every session.
+    """Start a session with full context from all prior sessions.
 
-    Loads the persona, session state, prior context, and relevant memories
-    based on the intent signal. Returns boot context files and session metadata.
+    Call this first. Returns your persona, prior session residue, relevant
+    memories, and user profile so you already know who you're talking to
+    and what you were working on together. Without this, you start cold.
 
     Args:
         persona_key: Which persona to load (default: "default")
@@ -127,10 +122,11 @@ def boot(
 
 @mcp.tool()
 def boot_pre_persona() -> str:
-    """Check available personas before booting.
+    """See which personas are available before choosing one.
 
-    Returns the list of available personas and whether template creation
-    is enabled. Call this if you need to select a persona before boot.
+    Returns the list of personas you can boot into and whether new persona
+    creation is enabled. Call this when the user hasn't specified which
+    persona to use, or on first run to detect whether onboarding is needed.
     """
     engine = _get_engine()
     result = engine.boot_pre_persona()
@@ -139,10 +135,12 @@ def boot_pre_persona() -> str:
 
 @mcp.tool()
 def recall(query: str, include_preflight: bool = True) -> str:
-    """Retrieve relevant memories for the current message.
+    """Get the context you need before responding to the user's message.
 
-    Call before composing each response (after the first). Runs the full
-    pipeline: flush deferred ingestion, preflight evaluation, targeted recall.
+    Call before composing each response. Returns memories, facts, and prior
+    decisions relevant to what the user just said. Also runs a preflight
+    check that catches contradictions and flags when you're about to say
+    something inconsistent with what you've said before.
 
     Args:
         query: The user's current message.
@@ -159,10 +157,11 @@ def recall(query: str, include_preflight: bool = True) -> str:
 
 @mcp.tool()
 def ingest(user_msg: str, assistant_msg: str) -> str:
-    """Store a conversation turn pair in memory.
+    """Save this exchange so you can recall it in future sessions.
 
-    Runs the full enrichment pipeline: extraction, embedding, knowledge graph
-    updates, identity enrichment, retrieval feedback tracking.
+    Stores the turn pair and runs enrichment: entity extraction, topic
+    routing, knowledge graph updates, and identity signal capture. This
+    is how you build a history with your user over time.
 
     Args:
         user_msg: The user's message text.
@@ -179,12 +178,12 @@ def ingest(user_msg: str, assistant_msg: str) -> str:
 
 @mcp.tool()
 def mark_response(response_text: str) -> str:
-    """Store the assistant's response for deferred ingestion.
+    """Buffer your response for automatic ingestion on the next turn.
 
-    Lightweight alternative to ingest(). Writes the response to session state.
-    The next recall() call finds the complete turn pair and ingests it
-    automatically as Step 0. Preferred over direct ingest() for the per-turn
-    cycle because it doesn't block the response.
+    Lighter than calling ingest() directly. Stores your response text, and
+    the next recall() call pairs it with the user's message and ingests
+    both automatically. Use this in the per-turn cycle so ingestion
+    doesn't block your response.
 
     Args:
         response_text: The assistant's full response text.
@@ -200,10 +199,12 @@ def mark_response(response_text: str) -> str:
 
 @mcp.tool()
 def remember(fact: str) -> str:
-    """Store a privileged user fact. Always-on, 3x boosted in retrieval.
+    """Permanently remember something important about your user.
 
-    Use for: preferences, biographical details, corrections, working style,
-    anything the user states as a fact about themselves or their work.
+    Use when the user states a preference, corrects a fact, shares
+    biographical info, or tells you how they like to work. These entries
+    are always loaded at boot and ranked 3x higher in search, so you
+    never forget what matters to them.
 
     Args:
         fact: The fact to remember.
@@ -219,11 +220,12 @@ def remember(fact: str) -> str:
 
 @mcp.tool()
 def write_residue(text: str) -> str:
-    """Write the rolling session residue.
+    """Capture the texture of this session so the next one starts in context.
 
-    The residue captures the session's texture and arc. Not a summary.
-    Not a todo list. Each call overwrites the previous. Write after each
-    response so that sessions ending without goodbye still have context.
+    Not a summary. Residue records what the session felt like: what was
+    decided, what shifted, what matters for next time. The next session's
+    boot loads this automatically, so you pick up the thread instead of
+    starting fresh. Write periodically; each call overwrites the previous.
 
     Args:
         text: Paragraph-form residue of the session so far.
@@ -239,10 +241,11 @@ def write_residue(text: str) -> str:
 
 @mcp.tool()
 def end(summary: str = "") -> str:
-    """End the current session.
+    """Close this session cleanly so nothing is lost.
 
-    Flushes any pending ingestion, finalizes the session, and closes
-    the database connection cleanly.
+    Flushes any buffered ingestion, finalizes session state, and closes
+    the database. Call this when the user is done. Skipping it risks
+    losing the last turn pair.
 
     Args:
         summary: Optional summary of what was accomplished.
@@ -260,7 +263,7 @@ def end(summary: str = "") -> str:
 
 @mcp.tool()
 def pulse() -> str:
-    """Heartbeat check. Returns whether the engine is alive and booted."""
+    """Check if the memory engine is running and ready."""
     engine = _get_engine()
     result = engine.pulse()
     return json.dumps(result, indent=2, default=str)
@@ -268,7 +271,7 @@ def pulse() -> str:
 
 @mcp.tool()
 def get_status() -> str:
-    """Get engine stats: entry count, retrieval health, session info."""
+    """See how much you know: entry count, retrieval health, session history."""
     check = _ensure_booted()
     if check:
         return json.dumps(check)
@@ -280,7 +283,7 @@ def get_status() -> str:
 
 @mcp.tool()
 def browse_recent(limit: int = 20) -> str:
-    """View recent memory entries.
+    """Review your most recent memories. Useful for verifying what was stored.
 
     Args:
         limit: Number of entries to return (default 20, max 100).
@@ -296,10 +299,11 @@ def browse_recent(limit: int = 20) -> str:
 
 @mcp.tool()
 def correct(old_entry_id: str, corrected_text: str) -> str:
-    """Supersede a wrong memory entry with corrected text.
+    """Fix a memory that was stored wrong. The old version is kept for history.
 
-    The old entry is marked as superseded (not deleted). The new entry
-    references the old one, maintaining history.
+    Use when you or the user notice a stored fact is incorrect. The old
+    entry is marked as superseded (not deleted), and the corrected version
+    takes its place in search results.
 
     Args:
         old_entry_id: The ID of the entry to correct.
@@ -316,7 +320,7 @@ def correct(old_entry_id: str, corrected_text: str) -> str:
 
 @mcp.tool()
 def profile_set(key: str, value: str) -> str:
-    """Set a user profile preference.
+    """Store a user preference that applies across all sessions.
 
     Args:
         key: Preference key (e.g., "timezone", "language", "dark_mode")
@@ -333,7 +337,7 @@ def profile_set(key: str, value: str) -> str:
 
 @mcp.tool()
 def profile_show() -> str:
-    """Show all user profile preferences."""
+    """See all stored preferences for this user."""
     check = _ensure_booted()
     if check:
         return json.dumps(check)
@@ -345,7 +349,7 @@ def profile_show() -> str:
 
 @mcp.tool()
 def get_residue() -> str:
-    """Get the latest session residue from the prior session."""
+    """Read what happened last session so you can pick up the thread."""
     check = _ensure_booted()
     if check:
         return json.dumps(check)

@@ -1,0 +1,37 @@
+# Solitaire for Agents
+
+> Persistent memory and evolving identity for AI agents. Local-first, model-agnostic.
+
+Solitaire gives AI agents cross-session memory, behavioral continuity, and self-correcting retrieval so they stop being strangers to the users they work with repeatedly. All data stays on the user's machine. Works with Claude, GPT, Gemini, local models, or any agent framework.
+
+## Core documentation
+
+- [README](https://github.com/PRDicta/Solitaire-for-Agents/blob/main/README.md): Overview, proof metrics, architecture, getting started
+- [AGENTS.md](https://github.com/PRDicta/Solitaire-for-Agents/blob/main/AGENTS.md): Agent-facing guide to what Solitaire does and how to use it
+- [MCP Server](https://github.com/PRDicta/Solitaire-for-Agents/blob/main/mcp-server/README.md): MCP tool setup and configuration
+- [Integration Contract](https://github.com/PRDicta/Solitaire-for-Agents/blob/main/README.md#integration-contract): What the host agent must provide
+
+## Key concepts
+
+- Boot: load persona, session state, prior context at session start
+- Recall: retrieve relevant memories before composing each response
+- Ingest: store each conversation turn with full enrichment (entities, topics, knowledge graph)
+- Remember: store privileged user facts at 3x retrieval boost
+- Residue: capture session texture so the next session starts in context
+- Behavioral genome: disposition profile (warmth, directness, initiative, etc.) that evolves from real interaction
+
+## Integration options
+
+- MCP server (FastMCP, stdio transport) for any MCP-compatible client
+- Python API: `from solitaire import SolitaireEngine`
+- CLI: `solitaire boot`, `solitaire recall`, `solitaire ingest-turn`
+- Claude Code hooks (automatic boot, recall, ingestion per turn)
+- Dify plugin (5 tool nodes)
+
+## Stats
+
+- 600+ sessions in production
+- 15,700+ indexed memory entries
+- Retrieval precision: 100% (top 3 results)
+- Persona trait alignment: 4.43/5.0
+- License: AGPL-3.0 (commercial license available)
