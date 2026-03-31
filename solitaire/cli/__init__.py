@@ -29,6 +29,7 @@ from .browse import browse
 from .harvest import integrity, hindsight_backfill
 from .onboard import onboard
 from .skills import load_skill
+from .symbiosis import symbiosis
 
 
 def _json_output(data: dict, file=None) -> None:
@@ -88,6 +89,7 @@ cli.add_command(profile)
 cli.add_command(browse)
 cli.add_command(integrity)
 cli.add_command(onboard)
+cli.add_command(symbiosis)
 cli.add_command(load_skill)
 cli.add_command(hindsight_backfill)
 

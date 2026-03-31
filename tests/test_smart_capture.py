@@ -590,3 +590,180 @@ class TestOnboardingSmartCapture:
         step = engine.get_next_step(ctx)
         # Should fall through to manual since no sources
         assert step.step_id == "smart_capture_manual"
+
+
+# ─── Public Entrypoint Integration Tests ───────────────────────────────────
+
+
+class TestOnboardStartScansEnvironment:
+    """Verify that onboard_start() runs the environment scan
+    and populates ctx.scan_result before the welcome step."""
+
+    def test_onboard_start_populates_scan_result_when_sources_exist(self, tmp_dir):
+        """The real onboarding entrypoint should detect existing memory sources."""
+        from unittest.mock import patch, MagicMock
+        from solitaire.engine import SolitaireEngine
+        from solitaire.symbiosis.environment_scanner import ScanResult, DetectedSource
+
+        # Create a minimal workspace with a persona dir
+        persona_dir = os.path.join(tmp_dir, "personas")
+        os.makedirs(persona_dir, exist_ok=True)
+        templates_dir = os.path.join(tmp_dir, "persona_templates")
+        os.makedirs(templates_dir, exist_ok=True)
+
+        engine = SolitaireEngine(workspace_dir=tmp_dir, persona_dir=persona_dir)
+
+        # Build a fake scan result with one source
+        fake_scan = ScanResult()
+        fake_scan.sources = [
+            DetectedSource(
+                source_id="auto-memory",
+                display_name="Claude Code memory",
+                path=os.path.join(tmp_dir, ".auto-memory"),
+                entry_count_estimate=42,
+                size_bytes=50000,
+                confidence=0.95,
+            )
+        ]
+        fake_scan.total_size_bytes = 50000
+        fake_scan.total_entry_estimate = 42
+
+        with patch(
+            "solitaire.symbiosis.environment_scanner.scan_environment",
+            return_value=fake_scan,
+        ) as mock_scan:
+            result = engine.onboard_start()
+
+        assert "error" not in result, f"onboard_start failed: {result}"
+        assert result["flow_version"] == "2.0"
+        mock_scan.assert_called_once()
+
+        # Now verify the context was saved with scan_result populated.
+        # Load the saved context and check.
+        from solitaire.core.onboarding_flow import load_onboarding_context
+        session_id = result["context_session_id"]
+        ctx = load_onboarding_context(session_id, tmp_dir)
+        assert ctx is not None, "Onboarding context was not saved"
+        assert ctx.scan_result is not None, "scan_result was not populated on context"
+        assert len(ctx.scan_result.get("sources", [])) == 1
+        assert ctx.scan_result["sources"][0]["source_id"] == "auto-memory"
+        assert ctx.ingestion_plan is not None, "ingestion_plan was not populated"
+        assert "strategy" in ctx.ingestion_plan
+
+    def test_onboard_start_works_without_sources(self, tmp_dir):
+        """When no sources are detected, onboarding still works (manual fallback)."""
+        from unittest.mock import patch
+        from solitaire.engine import SolitaireEngine
+        from solitaire.symbiosis.environment_scanner import ScanResult
+
+        persona_dir = os.path.join(tmp_dir, "personas")
+        os.makedirs(persona_dir, exist_ok=True)
+        templates_dir = os.path.join(tmp_dir, "persona_templates")
+        os.makedirs(templates_dir, exist_ok=True)
+
+        engine = SolitaireEngine(workspace_dir=tmp_dir, persona_dir=persona_dir)
+
+        empty_scan = ScanResult()
+
+        with patch("solitaire.symbiosis.environment_scanner.scan_environment", return_value=empty_scan):
+            result = engine.onboard_start()
+
+        assert "error" not in result
+        assert result["flow_version"] == "2.0"
+
+        from solitaire.core.onboarding_flow import load_onboarding_context
+        ctx = load_onboarding_context(result["context_session_id"], tmp_dir)
+        assert ctx is not None
+        assert ctx.scan_result is None  # No sources, so scan_result stays None
+
+    def test_onboard_start_survives_scan_failure(self, tmp_dir):
+        """If the environment scan throws, onboarding proceeds without it."""
+        from unittest.mock import patch
+        from solitaire.engine import SolitaireEngine
+
+        persona_dir = os.path.join(tmp_dir, "personas")
+        os.makedirs(persona_dir, exist_ok=True)
+        templates_dir = os.path.join(tmp_dir, "persona_templates")
+        os.makedirs(templates_dir, exist_ok=True)
+
+        engine = SolitaireEngine(workspace_dir=tmp_dir, persona_dir=persona_dir)
+
+        with patch(
+            "solitaire.symbiosis.environment_scanner.scan_environment",
+            side_effect=RuntimeError("scanner broke"),
+        ):
+            result = engine.onboard_start()
+
+        assert "error" not in result
+        assert result["flow_version"] == "2.0"
+
+
+class TestSymbiosisCLIRegistered:
+    """Verify that the symbiosis command group is visible from the public CLI."""
+
+    def test_symbiosis_in_cli_commands(self):
+        """solitaire --help should list the symbiosis command group."""
+        from solitaire.cli import cli
+        command_names = list(cli.commands.keys())
+        assert "symbiosis" in command_names, (
+            f"symbiosis not registered in CLI. Available: {command_names}"
+        )
+
+    def test_symbiosis_subcommands_exist(self):
+        """The symbiosis group should expose scan, capture, sources, status."""
+        from solitaire.cli import cli
+        symbiosis_group = cli.commands.get("symbiosis")
+        assert symbiosis_group is not None
+        sub_names = list(symbiosis_group.commands.keys())
+        for expected in ("scan", "capture", "sources", "status"):
+            assert expected in sub_names, (
+                f"'{expected}' not in symbiosis subcommands: {sub_names}"
+            )
+
+
+class TestCaptureDispatchPlumbing:
+    """Verify that the AdapterCLI capture dispatch forwards all arguments."""
+
+    def test_capture_dispatch_forwards_workspace_and_chunk_mb(self):
+        """capture dispatch should pass workspace and chunk_mb to cmd_capture."""
+        from unittest.mock import MagicMock, patch
+        from solitaire.symbiosis.cli import AdapterCLI
+
+        mock_sync = MagicMock()
+        mock_registry = MagicMock()
+        cli = AdapterCLI(sync_engine=mock_sync, registry=mock_registry)
+
+        with patch.object(cli, "cmd_capture", return_value={"status": "ok"}) as mock:
+            cli.dispatch([
+                "capture",
+                "--workspace", "/tmp/test_ws",
+                "--chunk-mb", "5.0",
+                "--auto",
+                "auto-memory",
+            ])
+
+        mock.assert_called_once_with(
+            workspace="/tmp/test_ws",
+            source_ids=["auto-memory"],
+            auto=True,
+            chunk_mb=5.0,
+        )
+
+    def test_capture_dispatch_defaults(self):
+        """capture dispatch without flags should use defaults."""
+        from unittest.mock import MagicMock, patch
+        from solitaire.symbiosis.cli import AdapterCLI
+
+        mock_sync = MagicMock()
+        mock_registry = MagicMock()
+        cli = AdapterCLI(sync_engine=mock_sync, registry=mock_registry)
+
+        with patch.object(cli, "cmd_capture", return_value={"status": "ok"}) as mock:
+            cli.dispatch(["capture"])
+
+        mock.assert_called_once_with(
+            workspace="",
+            source_ids=None,
+            auto=False,
+            chunk_mb=10.0,
+        )

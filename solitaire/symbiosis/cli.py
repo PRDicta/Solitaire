@@ -351,9 +351,32 @@ class AdapterCLI:
 
         elif cmd == "capture":
             auto = "--auto" in args
-            clean_args = [a for a in args[1:] if not a.startswith("--")]
+            workspace = ""
+            chunk_mb = 10.0
+            clean_args = []
+            i = 1
+            while i < len(args):
+                if args[i] == "--workspace" and i + 1 < len(args):
+                    workspace = args[i + 1]
+                    i += 2
+                elif args[i] == "--chunk-mb" and i + 1 < len(args):
+                    try:
+                        chunk_mb = float(args[i + 1])
+                    except ValueError:
+                        pass
+                    i += 2
+                elif args[i].startswith("--"):
+                    i += 1
+                else:
+                    clean_args.append(args[i])
+                    i += 1
             source_ids = clean_args if clean_args else None
-            return self.cmd_capture(source_ids=source_ids, auto=auto)
+            return self.cmd_capture(
+                workspace=workspace,
+                source_ids=source_ids,
+                auto=auto,
+                chunk_mb=chunk_mb,
+            )
 
         elif cmd in ("help", "h"):
             return self._help()

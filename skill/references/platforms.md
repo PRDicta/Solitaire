@@ -11,7 +11,7 @@ Solitaire works as a subprocess (CLI) or Python import on any platform that can 
 | **OpenClaw** | SKILL.md (native format) | Compatible | Reads SKILL.md natively. |
 | **Gemini CLI** | SKILL.md compatible | Compatible | Supports skill installation from SKILL.md. |
 | **Cursor / VS Code** | Extension wrapper | Planned | Requires custom extension to call CLI. Not in v1 scope. |
-| **Dify** | Plugin (5 tools) | Shipped | Wraps SolitaireEngine as Dify tool nodes: boot, ingest, recall, remember, end. |
+| **Dify** | Plugin (5 tools) | Prototype complete | Wraps SolitaireEngine as Dify tool nodes: boot, ingest, recall, remember, end. |
 
 ## Integration Patterns
 
