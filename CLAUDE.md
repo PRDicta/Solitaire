@@ -159,8 +159,9 @@ Boot returns a split format injected as context:
 - **Tier 2**: Identity, commitments, experiential memory, user knowledge
 - **Operations**: Session rules and behavioral instructions
 
-If the boot context contains briefing data, respond from it directly.
-No recall call needed. No other tool calls. Just respond.
+Auto-recall fires automatically via hook on every turn, including the first.
+Check for `[AUTO-RECALL CONTEXT]` blocks before responding. Use both boot
+context and any recalled context together.
 
 **After compaction or continuation (the ONE case where you boot manually):**
 
