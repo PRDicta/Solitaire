@@ -3,16 +3,16 @@ requires = ["setuptools>=68.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "solitaire"
-version = "1.4.0"
-description = "Persistent memory, self-healing knowledge graph, and evolving identity for AI agents. Local-first, model-agnostic."
+name = "solitaire-ai"
+version = "1.5.0"
+description = "Persistent memory and evolving identity for AI agents. Cross-session recall, behavioral continuity, self-correcting retrieval. Local-first, model-agnostic."
 readme = "README.md"
 license = {text = "AGPL-3.0-or-later"}
 requires-python = ">=3.10"
 authors = [
     {name = "Dicta Technologies"},
 ]
-keywords = ["ai", "memory", "agents", "identity", "persistent-memory"]
+keywords = ["ai", "memory", "agents", "identity", "persistent-memory", "mcp", "mcp-server", "agent-memory", "long-term-memory", "knowledge-graph", "llm-memory", "context-persistence"]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
@@ -41,7 +41,7 @@ compression = [
     "tiktoken>=0.5.0",
 ]
 all = [
-    "solitaire[embeddings,llm,compression]",
+    "solitaire-ai[embeddings,llm,compression]",
 ]
 dev = [
     "pytest>=7.0",
@@ -54,6 +54,8 @@ solitaire = "solitaire.cli:main"
 [project.urls]
 Homepage = "https://github.com/PRDicta/Solitaire-for-Agents"
 Repository = "https://github.com/PRDicta/Solitaire-for-Agents"
+Documentation = "https://github.com/PRDicta/Solitaire-for-Agents/blob/main/AGENTS.md"
+"MCP Server" = "https://github.com/PRDicta/Solitaire-for-Agents/tree/main/mcp-server"
 
 [tool.setuptools.packages.find]
 include = ["solitaire*"]
