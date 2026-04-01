@@ -12,6 +12,8 @@
 
 # Solitaire for Agents
 
+<!-- mcp-name: io.github.prdicta/solitaire -->
+
 Identity infrastructure for AI agents. Not just another memory tool.
 
 Most memory tools help agents retrieve facts from prior conversations. Useful...but not enough. Your agent still feels like a smart stranger with a better notebook.
