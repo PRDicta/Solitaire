@@ -668,15 +668,24 @@ class RatchetCandidate:
     first_seen: str = ""              # ISO timestamp
     last_seen: str = ""               # ISO timestamp
 
-    # Thresholds for auto-ratchet
-    MIN_SESSIONS: int = 5             # Minimum consistent sessions
+    # Thresholds for ratchet readiness
+    MIN_SESSIONS: int = 5             # Minimum consistent sessions to propose
     MIN_AVG_DELTA: float = 0.02       # Minimum average drift magnitude
+    AUTO_APPLY_SESSIONS: int = 50     # Auto-apply without approval after this many
 
     @property
     def ready(self) -> bool:
-        """Is this candidate ready for ratcheting?"""
+        """Is this candidate ready for ratcheting (manual approval)?"""
         return (
             self.consecutive_sessions >= self.MIN_SESSIONS
+            and abs(self.average_delta) >= self.MIN_AVG_DELTA
+        )
+
+    @property
+    def auto_apply(self) -> bool:
+        """Has this candidate accumulated enough evidence to auto-apply?"""
+        return (
+            self.consecutive_sessions >= self.AUTO_APPLY_SESSIONS
             and abs(self.average_delta) >= self.MIN_AVG_DELTA
         )
 
