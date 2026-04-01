@@ -12,7 +12,7 @@
 
 # Solitaire for Agents
 
-<!-- mcp-name: io.github.prdicta/solitaire -->
+<!-- mcp-name: io.github.PRDicta/solitaire -->
 
 Identity infrastructure for AI agents. Not just another memory tool.
 

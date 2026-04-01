@@ -1,18 +1,18 @@
 {
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
-  "name": "io.github.prdicta/solitaire",
+  "name": "io.github.PRDicta/solitaire",
   "title": "Solitaire for Agents",
-  "description": "Identity infrastructure for AI agents. Evolving persona, session continuity, self-correcting retrieval.",
+  "description": "Identity infrastructure for AI agents. Evolving persona, session continuity, self-tuning retrieval.",
   "repository": {
     "url": "https://github.com/PRDicta/Solitaire-for-Agents",
     "source": "github"
   },
-  "version": "1.5.1",
+  "version": "1.5.2",
   "packages": [
     {
       "registryType": "pypi",
       "identifier": "solitaire-ai",
-      "version": "1.5.1",
+      "version": "1.5.2",
       "transport": {
         "type": "stdio"
       }
