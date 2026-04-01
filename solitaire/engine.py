@@ -694,6 +694,45 @@ class SolitaireEngine:
         except Exception:
             pass  # Best-effort drain; don't block session end
 
+        # Persist persona state and auto-apply ratchets
+        auto_ratcheted = {}
+        try:
+            profile = self._lib.persona
+            if profile and self._persona_key:
+                # Resolve state path: {key}_state.json next to the yaml
+                persona_subdir = self.persona_dir / self._persona_key
+                state_path = str(persona_subdir / f"{self._persona_key}_state.json")
+                # Fallback for persona.yaml naming convention
+                if not (persona_subdir / f"{self._persona_key}.yaml").exists():
+                    alt = persona_subdir / "persona.yaml"
+                    if alt.exists():
+                        state_path = str(persona_subdir / "persona_state.json")
+
+                profile.save_state(state_path, session_id)
+
+                # Auto-apply ratchets that have enough evidence
+                if profile._state:
+                    # Resolve yaml path (same logic as boot)
+                    yaml_candidate = persona_subdir / "persona.yaml"
+                    yaml_path = str(yaml_candidate) if yaml_candidate.exists() else str(
+                        persona_subdir / f"{self._persona_key}.yaml"
+                    )
+
+                    for trait, candidate in list(
+                        profile._state.ratchet_candidates.items()
+                    ):
+                        if candidate.auto_apply:
+                            log_entry = profile.apply_ratchet(trait, yaml_path)
+                            if log_entry:
+                                log_entry["auto_applied"] = True
+                                auto_ratcheted[trait] = log_entry
+
+                    # Re-save state after any auto-ratchets cleared candidates
+                    if auto_ratcheted and profile._state:
+                        profile._state.save(state_path)
+        except Exception:
+            pass  # Best-effort; don't block session end
+
         # End the session
         self._lib.end_session(summary=summary)
 
@@ -710,6 +749,8 @@ class SolitaireEngine:
             "summary": summary,
             "retrieval_feedback": result_weight_stats if result_weight_stats else {},
         }
+        if auto_ratcheted:
+            result["auto_ratcheted"] = auto_ratcheted
         return result
 
     # ─── Context Accessors ────────────────────────────────────────────────
