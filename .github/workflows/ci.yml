@@ -30,6 +30,24 @@ jobs:
       - name: Run tests with coverage
         run: python -m pytest tests/ -v --cov=solitaire --cov-report=term-missing --cov-fail-under=20
 
+  security-audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install package and audit tool
+        run: |
+          pip install -e .
+          pip install pip-audit
+
+      - name: Run pip-audit
+        run: pip-audit
+
   release-smoke:
     runs-on: ubuntu-latest
     steps:
