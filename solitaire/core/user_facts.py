@@ -554,7 +554,15 @@ def build_facts_block(facts: List[UserFact]) -> str:
     for subject, subject_facts in by_subject.items():
         # Sort by confidence desc, then created_at desc
         subject_facts.sort(key=lambda f: (-f.confidence, f.created_at or ""), reverse=False)
-        pairs = [f"{f.predicate} {f.value}" for f in subject_facts]
+        # Dedup on (predicate, value) — keep first (highest confidence) occurrence
+        seen = set()
+        deduped = []
+        for f in subject_facts:
+            key = (f.predicate.strip().lower(), f.value.strip().lower())
+            if key not in seen:
+                seen.add(key)
+                deduped.append(f)
+        pairs = [f"{f.predicate} {f.value}" for f in deduped]
         lines.append(f"  {subject}: {' | '.join(pairs)}")
     lines.append("═══ END KNOWN FACTS ═══")
 
