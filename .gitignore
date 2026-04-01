@@ -19,3 +19,5 @@ backups/
 .DS_Store
 Thumbs.db
 updater/output/
+mcp-publisher.exe
+mcp-publisher

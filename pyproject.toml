@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "solitaire-ai"
-version = "1.5.0"
-description = "Persistent memory and evolving identity for AI agents. Cross-session recall, behavioral continuity, self-correcting retrieval. Local-first, model-agnostic."
+version = "1.5.1"
+description = "Identity infrastructure for AI agents. Evolving persona, session continuity, self-correcting retrieval. Local-first, model-agnostic."
 readme = "README.md"
 license = {text = "AGPL-3.0-or-later"}
 requires-python = ">=3.10"
