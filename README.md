@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/banner.png" alt="Solitaire for Agents" width="100%">
+  <img src="https://raw.githubusercontent.com/PRDicta/Solitaire-for-Agents/main/assets/banner.png" alt="Solitaire for Agents" width="100%">
 </p>
 
 <p align="center">
@@ -7,7 +7,7 @@
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-AGPL--3.0-blue.svg" alt="License"></a>
   <img src="https://img.shields.io/badge/python-3.10%2B-blue.svg" alt="Python 3.10+">
   <img src="https://img.shields.io/badge/sessions-600%2B-orange.svg" alt="600+ sessions">
-  <img src="https://img.shields.io/badge/entries-14%2C000%2B-orange.svg" alt="14,000+ entries">
+  <img src="https://img.shields.io/badge/entries-15%2C700%2B-orange.svg" alt="15,700+ entries">
 </p>
 
 # Solitaire for Agents
@@ -32,14 +32,14 @@ Bring your own memory system or use ours. Solitaire sits above the storage layer
 
 ## Proof
 
-600+ sessions | 14,000+ entries | Production since February 2026
+600+ sessions | 15,700+ entries | Production since February 2026
 
 | What we measured | Before | After | What it means |
 |-----------------|--------|-------|---------------|
 | Retrieval precision (top 3 results) | 80% | 100% | Early on, 1 in 3 retrieved memories was irrelevant. Now all three are useful. |
 | Persona trait alignment (5-point scale) | 2.25 | 4.43 | The agent's working style started as a poor match. It's now a close one. |
 
-Both metrics measured across 600+ real sessions with a single-dyad deployment. Two accompanying research papers formalize the methodology and findings.
+Both metrics measured across 600+ real sessions with a single-operator deployment. Two accompanying research papers formalize the methodology and findings.
 
 ## What makes it different
 
