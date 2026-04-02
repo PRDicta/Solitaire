@@ -119,7 +119,7 @@ parts.append(f"{partner_name} is online. All tiers loaded.")
 parts.append("")
 
 if context_content:
-    parts.append("--- CONTEXT (persona, residue, briefing, facts) ---")
+    parts.append("--- TIER 1 (persona, direction, residue, briefing, facts) ---")
     parts.append(context_content)
     parts.append("")
 
