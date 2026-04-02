@@ -108,6 +108,7 @@ def read_file(path):
 context_file = boot_files.get("context", boot_files.get("t1", ""))
 ops_file = boot_files.get("operations", "")
 t2_file = boot_files.get("t2", "")
+auto_closed = boot_data.get("auto_closed")
 
 context_content = read_file(context_file)
 ops_content = read_file(ops_file)
@@ -121,6 +122,13 @@ parts.append("")
 if context_content:
     parts.append("--- TIER 1 (persona, direction, residue, briefing, facts) ---")
     parts.append(context_content)
+    parts.append("")
+
+# If auto-close fired, inject a message between context and T2
+if auto_closed and auto_closed.get("status") != "skipped":
+    prior_sid = auto_closed.get("prior_session_id", "unknown")[:8]
+    parts.append("--- PRIOR SESSION CLOSED ---")
+    parts.append(f"Automatically closed prior session {prior_sid}. Residue updated from partial to final.")
     parts.append("")
 
 if t2_content:
