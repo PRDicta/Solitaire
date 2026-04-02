@@ -2079,6 +2079,19 @@ class SolitaireEngine:
             except Exception:
                 pass
 
+        # ── T1: Writing hard gates (promoted for attention positioning) ─
+        blocks["writing_hard_gates"] = "\n".join([
+            "═══ WRITING HARD GATES ═══", "",
+            "These rules are absolute. Zero tolerance. Check before every response.",
+            "1. No em dashes (—). Rewrite with commas, periods, colons, semicolons, or parentheses.",
+            "2. No cursed-word clustering: 3+ AI-tell words in proximity = rewrite.",
+            "3. No declarative staccato chains: 3+ consecutive short sentences (<15 words each) all ending in periods. Connect with conjunctions or commas.",
+            '4. No negative parallelism as rhetoric ("It\'s not X, it\'s Y"). Say what something IS.',
+            "Full writing standards in ops block. These four are hard gates.",
+            "",
+            "═══ END WRITING HARD GATES ═══",
+        ])
+
         # ── T1: Pointers to T2/T3 resources ──────────────────────────
         pointer_lines = ["═══ REFERENCE ═══", ""]
         pointer_lines.append("Tier 2 context (identity, experiential history, user knowledge, resident knowledge) loads before Turn 2.")
@@ -2193,6 +2206,7 @@ class SolitaireEngine:
     # Tier assembly keys: (block_key, header_label)
     TIER1_KEYS = [
         ("cognitive_profile", "COGNITIVE PROFILE"),
+        ("writing_hard_gates", "WRITING HARD GATES"),
         ("direction", "DIRECTION"),
         ("experiential_t1", "EXPERIENTIAL MEMORY"),
         ("residue", "SESSION RESIDUE"),
@@ -2279,6 +2293,23 @@ class SolitaireEngine:
         sections = []
 
         sections.append("# Session Operations\n")
+
+        # ── Writing Standards (FIRST — governs all output) ───────────
+        sections.append(
+            "## Writing Standards (MANDATORY, all responses)\n"
+            "Ref: solitaire/ai_writing_tells.md (23 categories: 13 surface + 2 structural + 8 interactional)\n\n"
+            "Cursed cluster: delve, intricate, tapestry, pivotal, underscore(v), landscape(met),\n"
+            "  foster, testament, multifaceted, leverage, utilize, nuanced, realm, robust, streamline,\n"
+            "  paradigm, holistic, myriad, plethora, elucidate, culminate, encompass, spearhead,\n"
+            "  bolster, navigate(met), cornerstone, embark, forge(met), resonate, advent.\n"
+            "  Any one is fine. 3+ in proximity = AI smell.\n"
+            'No em dashes. No "It\'s not X, it\'s Y." No -ing editorial filler. No throat-clearing.\n'
+            'No compulsive summaries. No closers that add nothing. No "honestly." No "good catch."\n'
+            "No false ranges. No bloated phrasing. Vague superlatives need evidence. Weasel words need attribution.\n"
+            "Scan for tell clustering before sending anything >3 sentences.\n"
+        )
+
+        # ── Format Anchors ──────────────────────────────────────────
         # Get persona name for the anchor
         _anchor_name = self._lib.persona.name if self._lib.persona else "Partner"
         sections.append(
@@ -2295,21 +2326,6 @@ class SolitaireEngine:
             genome = self._build_behavioral_genome()
             if genome:
                 sections.append(genome)
-
-        # ── Writing Standards ────────────────────────────────────────
-        sections.append(
-            "## Writing Standards (MANDATORY, all responses)\n"
-            "Ref: solitaire/ai_writing_tells.md (23 categories: 13 surface + 2 structural + 8 interactional)\n\n"
-            "Cursed cluster: delve, intricate, tapestry, pivotal, underscore(v), landscape(met),\n"
-            "  foster, testament, multifaceted, leverage, utilize, nuanced, realm, robust, streamline,\n"
-            "  paradigm, holistic, myriad, plethora, elucidate, culminate, encompass, spearhead,\n"
-            "  bolster, navigate(met), cornerstone, embark, forge(met), resonate, advent.\n"
-            "  Any one is fine. 3+ in proximity = AI smell.\n"
-            'No em dashes. No "It\'s not X, it\'s Y." No -ing editorial filler. No throat-clearing.\n'
-            'No compulsive summaries. No closers that add nothing. No "honestly." No "good catch."\n'
-            "No false ranges. No bloated phrasing. Vague superlatives need evidence. Weasel words need attribution.\n"
-            "Scan for tell clustering before sending anything >3 sentences.\n"
-        )
 
         return "\n".join(sections)
 
