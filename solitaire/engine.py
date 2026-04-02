@@ -251,6 +251,7 @@ class SolitaireEngine:
                 "activeForm": f"Running as {persona_info.get('identity', {}).get('name', persona_key)}",
             },
             "boot_files": boot_files,
+            "boot_tiers": self._session_data.get("boot_tiers", {}),
             "backup": backup_result,
             "update": update_info,
         }
@@ -758,14 +759,23 @@ class SolitaireEngine:
     def get_boot_context(self) -> str:
         """
         Return the full boot context as a string for prompt injection.
-        Reads from the boot context file written during boot().
+        Reads T1 + T2 files written during boot(). Falls back to legacy
+        single-file format if T1 doesn't exist.
         """
         self._ensure_booted("get_boot_context")
-        context_path = self._session_data.get("boot_files_context")
-        if context_path and os.path.exists(context_path):
-            with open(context_path, "r", encoding="utf-8") as f:
-                return f.read()
-        return ""
+
+        t1_path = self._session_data.get("boot_files_t1", self._session_data.get("boot_files_context", ""))
+        t2_path = self._session_data.get("boot_files_t2", "")
+
+        parts = []
+        if t1_path and os.path.exists(t1_path):
+            with open(t1_path, "r", encoding="utf-8") as f:
+                parts.append(f.read())
+        if t2_path and os.path.exists(t2_path):
+            with open(t2_path, "r", encoding="utf-8") as f:
+                parts.append(f.read())
+
+        return "\n\n".join(parts) if parts else ""
 
     def get_stats(self) -> Dict[str, Any]:
         """Return system stats."""
@@ -1952,24 +1962,31 @@ class SolitaireEngine:
         cold: bool = False,
         persona_key: str = "",
     ) -> Dict[str, str]:
-        """Build all the context blocks loaded at boot time."""
+        """Build all the context blocks loaded at boot time.
+
+        Returns blocks keyed for tiered assembly:
+        - T1 keys: cognitive_profile, direction, experiential_t1, residue,
+          tail, facts, briefing, pointers
+        - T2 keys: identity_t2, experiential_t2, user_knowledge,
+          resident_knowledge, profile, intent, commitments_meta
+        """
         blocks = {}
 
-        # Cognitive profile (from persona)
+        # ── T1: Cognitive profile (from persona) ─────────────────────
         if self._lib.persona:
             blocks["cognitive_profile"] = self._build_cognitive_profile()
 
-        # User knowledge
+        # ── T1: Direction (merged north star + growth edges + commitments)
         try:
-            from .retrieval.context_builder import ContextBuilder
-            cb = ContextBuilder()
-            uk_entries = self._lib.rolodex.get_user_knowledge_entries(priority="core")
-            if uk_entries:
-                blocks["user_knowledge"] = cb.build_user_knowledge_block(uk_entries)
+            from .storage.identity_graph import IdentityGraph
+            ig = IdentityGraph(self._lib.rolodex.conn)
+            direction_block = ig.build_t1_direction_block(token_budget=400)
+            if direction_block:
+                blocks["direction"] = direction_block
         except Exception:
             pass
 
-        # Session briefing
+        # ── T1: Session briefing ─────────────────────────────────────
         try:
             from .core.session_briefing import build_briefing_block
             briefing_result = build_briefing_block(
@@ -1983,7 +2000,143 @@ class SolitaireEngine:
         except Exception:
             pass
 
-        # Intent context
+        # ── T1: Known facts ──────────────────────────────────────────
+        try:
+            from .core.user_facts import UserFactsStore, build_facts_block
+            fs = UserFactsStore(self._lib.rolodex.conn)
+            facts = fs.get_all_active_facts()
+            if facts:
+                facts_block = build_facts_block(facts)
+                if facts_block:
+                    blocks["facts"] = facts_block
+        except Exception:
+            pass
+
+        # ── Experiential memory (load all, split T1/T2) ─────────────
+        if not cold:
+            try:
+                from .core.experiential_encoder import (
+                    get_recent_encodings, build_experiential_block,
+                )
+                all_encodings = get_recent_encodings(
+                    conn=self._lib.rolodex.conn,
+                    persona_key=persona_key,
+                    limit=5,
+                    exclude_session=self._session_id,
+                )
+                if all_encodings:
+                    # T1: most recent encoding only
+                    t1_block = build_experiential_block(all_encodings[:1])
+                    if t1_block:
+                        blocks["experiential_t1"] = t1_block
+                    # T2: remaining encodings
+                    if len(all_encodings) > 1:
+                        t2_block = build_experiential_block(all_encodings[1:])
+                        if t2_block:
+                            blocks["experiential_t2"] = t2_block
+            except Exception:
+                pass
+
+        # ── T1: Session residue (3 most recent, skip on cold boot) ───
+        _residue_ts = ""
+        if not cold:
+            try:
+                from .core.session_residue import (
+                    load_recent_residues, build_multi_residue_block,
+                    load_session_tail, build_tail_block,
+                )
+                persona_dir_str = str(self.persona_dir / persona_key) if persona_key else None
+                residues = load_recent_residues(
+                    conn=self._lib.rolodex.conn,
+                    current_session_id=self._session_id,
+                    persona_key=persona_key,
+                    persona_dir=persona_dir_str,
+                    n=3,
+                )
+                if residues:
+                    _residue_ts = residues[0].get("timestamp", "")
+                    residue_block = build_multi_residue_block(residues)
+                    if residue_block:
+                        blocks["residue"] = residue_block
+            except Exception:
+                pass
+
+        # ── T1: Session tail (red-hot context from prior session) ────
+        if not cold:
+            try:
+                from .core.session_residue import load_session_tail, build_tail_block
+                persona_dir_str = str(self.persona_dir / persona_key) if persona_key else None
+                _tail_data = load_session_tail(
+                    conn=self._lib.rolodex.conn,
+                    current_session_id=self._session_id,
+                    persona_key=persona_key,
+                    persona_dir=persona_dir_str,
+                )
+                if _tail_data.get("turns"):
+                    tail_block = build_tail_block(_tail_data)
+                    if tail_block:
+                        blocks["tail"] = tail_block
+            except Exception:
+                pass
+
+        # ── T1: Pointers to T2/T3 resources ──────────────────────────
+        pointer_lines = ["═══ REFERENCE ═══", ""]
+        pointer_lines.append("Tier 2 context (identity, experiential history, user knowledge, resident knowledge) loads before Turn 2.")
+        pointer_lines.append("On-demand: `recall <topic>` for targeted retrieval. `identity show` for full graph.")
+        pointer_lines.append("")
+        pointer_lines.append("═══ END REFERENCE ═══")
+        blocks["pointers"] = "\n".join(pointer_lines)
+
+        # ── T2: Identity (realizations, patterns, tensions) ──────────
+        try:
+            from .storage.identity_graph import IdentityGraph
+            ig = IdentityGraph(self._lib.rolodex.conn)
+            t2_identity = ig.build_t2_identity_block(token_budget=1000)
+            if t2_identity:
+                blocks["identity_t2"] = t2_identity
+        except Exception:
+            pass
+
+        # ── T2: User knowledge ───────────────────────────────────────
+        try:
+            from .retrieval.context_builder import ContextBuilder
+            cb = ContextBuilder()
+            uk_entries = self._lib.rolodex.get_user_knowledge_entries(priority="core")
+            if uk_entries:
+                blocks["user_knowledge"] = cb.build_user_knowledge_block(uk_entries)
+        except Exception:
+            pass
+
+        # ── T2: Resident knowledge (indexed packs) ───────────────────
+        try:
+            from .core.resident_knowledge import build_resident_knowledge_block
+            _rk_budget = 4000
+            if self._lib.persona and hasattr(self._lib.persona, 'resident_budget_tokens'):
+                _rk_budget = self._lib.persona.resident_budget_tokens or 4000
+            rk_block = build_resident_knowledge_block(
+                conn=self._lib.rolodex.conn,
+                persona_key=persona_key,
+                persona_dir=str(self.persona_dir / persona_key) if persona_key else None,
+                budget_tokens=_rk_budget,
+            )
+            if rk_block:
+                blocks["resident_knowledge"] = rk_block
+        except Exception:
+            pass
+
+        # ── T2: User profile ─────────────────────────────────────────
+        try:
+            from .retrieval.context_builder import ContextBuilder
+            cb = ContextBuilder()
+            profile = self._get_profile()
+            if profile:
+                profile_block = cb.build_profile_block(profile)
+                if profile_block:
+                    blocks["profile"] = profile_block
+        except Exception:
+            pass
+
+        # ── T2: Intent context ───────────────────────────────────────
         if intent:
             try:
                 from .core.intent_context import build_intent_context_block
@@ -2003,126 +2156,30 @@ class SolitaireEngine:
             except Exception:
                 pass
 
-        # Session residue (skip on cold boot)
-        _residue_meta = {}
-        if not cold:
-            try:
-                from .core.session_residue import load_latest_residue, build_residue_block
-                persona_dir_str = str(self.persona_dir / persona_key) if persona_key else None
-                _residue_meta = load_latest_residue(
-                    conn=self._lib.rolodex.conn,
-                    current_session_id=self._session_id,
-                    persona_key=persona_key,
-                    persona_dir=persona_dir_str,
-                )
-                residue_block = build_residue_block(
-                    _residue_meta.get("text", ""),
-                    timestamp=_residue_meta.get("timestamp"),
-                    session_id=_residue_meta.get("session_id"),
-                )
-                if residue_block:
-                    blocks["residue"] = residue_block
-            except Exception:
-                pass
-
-        # Session tail (red-hot context from prior session)
-        if not cold:
-            try:
-                from .core.session_residue import load_session_tail, build_tail_block
-                persona_dir_str = str(self.persona_dir / persona_key) if persona_key else None
-                _tail_data = load_session_tail(
-                    conn=self._lib.rolodex.conn,
-                    current_session_id=self._session_id,
-                    persona_key=persona_key,
-                    persona_dir=persona_dir_str,
-                )
-                if _tail_data.get("turns"):
-                    tail_block = build_tail_block(_tail_data)
-                    if tail_block:
-                        blocks["tail"] = tail_block
-            except Exception:
-                pass
-
-        # Resident knowledge (indexed packs)
-        try:
-            from .core.resident_knowledge import build_resident_knowledge_block
-            rk_block = build_resident_knowledge_block(
-                conn=self._lib.rolodex.conn,
-                persona_key=persona_key,
-                persona_dir=str(self.persona_dir / persona_key) if persona_key else None,
-                budget_tokens=2000,
-            )
-            if rk_block:
-                blocks["resident_knowledge"] = rk_block
-        except Exception:
-            pass
-
-        # Identity context
-        try:
-            from .storage.identity_graph import IdentityGraph
-            ig = IdentityGraph(self._lib.rolodex.conn)
-            identity_block = ig.build_identity_context_block(budget_tokens=1500)
-            if identity_block:
-                blocks["identity"] = identity_block
-        except Exception:
-            pass
-
-        # Experiential memory (skip on cold boot)
-        if not cold:
-            try:
-                from .core.experiential_encoder import load_experiential_block
-                exp_block = load_experiential_block(
-                    persona_dir=str(self.persona_dir / persona_key) if persona_key else None,
-                    budget_tokens=1500,
-                )
-                if exp_block:
-                    blocks["experiential"] = exp_block
-            except Exception:
-                pass
-
-        # Active commitments
+        # ── T2: Active commitments (retrospective + new) ─────────────
         try:
             from .storage.identity_graph import IdentityGraph
             ig = IdentityGraph(self._lib.rolodex.conn)
             commitments = ig.build_commitments_block()
             if commitments:
-                blocks["commitments"] = commitments
+                blocks["commitments_meta"] = commitments
         except Exception:
             pass
 
-        # Proactive tool proposals (surface pending suggestions at boot)
-        try:
-            from .core.tool_finder import get_pending_proposals, format_boot_proposals
-            proposals = get_pending_proposals(self._lib.rolodex.conn)
-            if proposals:
-                proposal_block = format_boot_proposals(proposals)
-                if proposal_block:
-                    blocks["tool_proposals"] = proposal_block
-        except Exception:
-            pass  # Non-fatal — table may not exist yet
-
-        # ── Residue/Briefing Conflict Resolution ──────────────────────
-        # When a fresh residue exists, it IS the authoritative session
-        # handoff. The briefing's open-thread detection uses keyword
-        # scanning on old entries and can resurface work that was completed
-        # in the session that wrote the residue. Strip the briefing's
-        # "Open threads:" section when the residue is fresh enough to be
-        # the definitive source.
-        if blocks.get("residue") and blocks.get("briefing") and _residue_meta.get("text"):
-            _residue_ts = _residue_meta.get("timestamp", "")
+        # ── Residue/Briefing Conflict Resolution ─────────────────────
+        if blocks.get("residue") and blocks.get("briefing") and _residue_ts:
             _residue_fresh = False
-            if _residue_ts:
-                try:
-                    from datetime import datetime, timezone, timedelta
-                    _rts = _residue_ts.replace("Z", "+00:00")
-                    if "+" not in _rts and _rts.count("-") <= 2:
-                        _rdt = datetime.fromisoformat(_rts).replace(tzinfo=timezone.utc)
-                    else:
-                        _rdt = datetime.fromisoformat(_rts)
-                    _age_hours = (datetime.now(timezone.utc) - _rdt).total_seconds() / 3600
-                    _residue_fresh = _age_hours < 6
-                except Exception:
-                    pass
+            try:
+                from datetime import datetime, timezone
+                _rts = _residue_ts.replace("Z", "+00:00")
+                if "+" not in _rts and _rts.count("-") <= 2:
+                    _rdt = datetime.fromisoformat(_rts).replace(tzinfo=timezone.utc)
+                else:
+                    _rdt = datetime.fromisoformat(_rts)
+                _age_hours = (datetime.now(timezone.utc) - _rdt).total_seconds() / 3600
+                _residue_fresh = _age_hours < 6
+            except Exception:
+                pass
             if _residue_fresh:
                 import re as _re_bt
                 blocks["briefing"] = _re_bt.sub(
@@ -2133,44 +2190,83 @@ class SolitaireEngine:
 
         return blocks
 
+    # Tier assembly keys: (block_key, header_label)
+    TIER1_KEYS = [
+        ("cognitive_profile", "COGNITIVE PROFILE"),
+        ("direction", "DIRECTION"),
+        ("experiential_t1", "EXPERIENTIAL MEMORY"),
+        ("residue", "SESSION RESIDUE"),
+        ("tail", "SESSION TAIL"),
+        ("facts", "KNOWN FACTS"),
+        ("briefing", "SITUATIONAL BRIEFING"),
+        ("pointers", "REFERENCE"),
+    ]
+
+    TIER2_KEYS = [
+        ("identity_t2", "IDENTITY CONTEXT"),
+        ("commitments_meta", "ACTIVE COMMITMENTS"),
+        ("experiential_t2", "EXPERIENTIAL MEMORY"),
+        ("user_knowledge", "USER KNOWLEDGE"),
+        ("resident_knowledge", "RESIDENT KNOWLEDGE"),
+        ("profile", "USER PROFILE"),
+        ("intent", "INTENT CONTEXT"),
+    ]
+
     def _write_boot_files(self, blocks: Dict[str, str]) -> Dict[str, str]:
-        """Write boot context and operations to files, return paths."""
+        """Write tiered boot context and operations to files, return paths."""
+        from .core.types import estimate_tokens
+
         boot_dir = self.workspace_dir
-        context_path = str(boot_dir / "_boot_context.md")
+        t1_path = str(boot_dir / "_boot_t1.md")
+        t2_path = str(boot_dir / "_boot_t2.md")
         ops_path = str(boot_dir / "_boot_ops.md")
 
-        # Context file: all the pre-loaded context blocks
-        context_parts = []
-        section_order = [
-            ("cognitive_profile", "COGNITIVE PROFILE"),
-            ("experiential", "EXPERIENTIAL MEMORY"),
-            ("user_knowledge", "USER KNOWLEDGE"),
-            ("resident_knowledge", "RESIDENT KNOWLEDGE"),
-            ("identity", "IDENTITY CONTEXT"),
-            ("commitments", "ACTIVE COMMITMENTS"),
-            ("briefing", "SITUATIONAL BRIEFING"),
-            ("residue", "SESSION RESIDUE"),
-            ("intent", "INTENT CONTEXT"),
-        ]
-        for key, header in section_order:
+        # Assemble T1
+        t1_parts = []
+        for key, _header in self.TIER1_KEYS:
             if key in blocks and blocks[key]:
-                context_parts.append(blocks[key])
+                t1_parts.append(blocks[key])
+        t1_content = "\n\n".join(t1_parts)
 
-        # Write context file
-        with open(context_path, "w", encoding="utf-8") as f:
-            f.write("\n\n".join(context_parts))
+        # Assemble T2
+        t2_parts = []
+        for key, _header in self.TIER2_KEYS:
+            if key in blocks and blocks[key]:
+                t2_parts.append(blocks[key])
+        t2_content = "\n\n".join(t2_parts)
 
-        # Operations file: session rules (placeholder for now)
+        # Write files
+        with open(t1_path, "w", encoding="utf-8") as f:
+            f.write(t1_content)
+
+        with open(t2_path, "w", encoding="utf-8") as f:
+            f.write(t2_content)
+
         with open(ops_path, "w", encoding="utf-8") as f:
             f.write(self._build_operations_block())
 
-        # Save paths to session data
-        self._session_data["boot_files_context"] = context_path
+        # Token accounting
+        t1_tokens = estimate_tokens(t1_content)
+        t2_tokens = estimate_tokens(t2_content)
+        combined = t1_tokens + t2_tokens
+
+        # Save paths and token data to session state
+        self._session_data["boot_files_t1"] = t1_path
+        self._session_data["boot_files_t2"] = t2_path
         self._session_data["boot_files_ops"] = ops_path
+        self._session_data["boot_files_context"] = t1_path  # legacy compat
+        self._session_data["boot_tiers"] = {
+            "t1_tokens": t1_tokens,
+            "t2_tokens": t2_tokens,
+            "combined_tokens": combined,
+            "warning": f"Boot context is {combined} tokens (exceeds 15,000 soft ceiling)" if combined > 15000 else None,
+        }
 
         return {
-            "context": context_path,
+            "t1": t1_path,
+            "t2": t2_path,
             "operations": ops_path,
+            "context": t1_path,  # legacy compat
         }
 
     def _build_operations_block(self) -> str:

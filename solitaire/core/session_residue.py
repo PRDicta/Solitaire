@@ -274,6 +274,130 @@ def _load_residue_from_jsonl(jsonl_store, current_session_id: str) -> dict:
         return empty
 
 
+def load_recent_residues(
+    conn: sqlite3.Connection,
+    current_session_id: str,
+    persona_key: str = "",
+    persona_dir: Optional[str] = None,
+    jsonl_store=None,
+    n: int = 3,
+) -> List[dict]:
+    """
+    Load the N most recent session residues from prior sessions.
+
+    Uses the same resolution order as load_latest_residue but returns
+    multiple entries. File-based path (latest_residue.json) stores
+    latest + history, so this can return up to n entries from file alone.
+    Falls back to DB for additional entries if file doesn't have enough.
+
+    Returns:
+        List of dicts with keys: text, timestamp, session_id.
+        Most recent first. Empty list if none found.
+    """
+    results: List[dict] = []
+    seen_sessions: set = set()
+
+    # ── File path (fast, has latest + history) ──────────────────────
+    residue_dir = None
+    if persona_dir:
+        residue_dir = os.path.join(persona_dir, "residue")
+    else:
+        residue_dir = _residue_dir(conn, persona_key)
+
+    if residue_dir:
+        residue_file = os.path.join(residue_dir, "latest_residue.json")
+        try:
+            if os.path.exists(residue_file):
+                with open(residue_file) as f:
+                    data = json.load(f)
+
+                # Collect latest + history entries
+                candidates = []
+                entry = data.get("latest", data) if "latest" in data else data
+                if entry.get("residue") and entry.get("session_id") != current_session_id:
+                    candidates.append(entry)
+                for hist in data.get("history", []):
+                    if hist.get("residue") and hist.get("session_id") != current_session_id:
+                        candidates.append(hist)
+
+                for c in candidates[:n]:
+                    sid = c.get("session_id", "")
+                    if sid not in seen_sessions:
+                        results.append({
+                            "text": c.get("residue", ""),
+                            "timestamp": c.get("timestamp"),
+                            "session_id": sid,
+                        })
+                        seen_sessions.add(sid)
+        except Exception:
+            pass
+
+    # ── DB fallback for remaining slots ─────────────────────────────
+    if len(results) < n:
+        try:
+            exclude_ids = [current_session_id] + list(seen_sessions)
+            placeholders = ",".join("?" for _ in exclude_ids)
+            rows = conn.execute(f"""
+                SELECT content, created_at, conversation_id FROM rolodex_entries
+                WHERE source_type = 'session_residue'
+                  AND conversation_id NOT IN ({placeholders})
+                  AND superseded_by IS NULL
+                ORDER BY created_at DESC
+                LIMIT ?
+            """, (*exclude_ids, n - len(results))).fetchall()
+            for row in rows:
+                sid = row[2] if len(row) > 2 else None
+                if sid and sid not in seen_sessions:
+                    results.append({
+                        "text": row[0],
+                        "timestamp": row[1] if len(row) > 1 else None,
+                        "session_id": sid,
+                    })
+                    seen_sessions.add(sid)
+        except Exception:
+            pass
+
+    return results[:n]
+
+
+def build_multi_residue_block(residues: List[dict]) -> str:
+    """
+    Format multiple residues into a single boot context block.
+
+    Args:
+        residues: List of dicts from load_recent_residues, each with
+                  text, timestamp, session_id. Most recent first.
+
+    Returns:
+        Formatted block string, or empty string if no residues.
+    """
+    if not residues:
+        return ""
+
+    parts = []
+    for i, r in enumerate(residues):
+        text = r.get("text", "").strip()
+        if not text:
+            continue
+
+        meta_parts = []
+        if r.get("timestamp"):
+            ts_display = r["timestamp"][:16].replace("T", " ")
+            meta_parts.append(f"written: {ts_display}")
+        if r.get("session_id"):
+            meta_parts.append(f"session: {r['session_id'][:8]}")
+
+        label = "prior session" if i == 0 else f"session {i + 1} ago"
+        header = f"═══ SESSION RESIDUE ({label})"
+        if meta_parts:
+            header += f" [{', '.join(meta_parts)}]"
+        header += " ═══"
+
+        parts.append(f"{header}\n\n{text}\n\n═══ END RESIDUE ═══")
+
+    return "\n\n".join(parts)
+
+
 def build_residue_block(residue_text: str, timestamp: Optional[str] = None, session_id: Optional[str] = None) -> str:
     """
     Format a residue for injection into the context block.

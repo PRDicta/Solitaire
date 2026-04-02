@@ -1911,6 +1911,153 @@ class IdentityGraph:
         lines.append("═══ END IDENTITY CONTEXT ═══")
         return "\n".join(lines)
 
+    def build_t1_direction_block(self, token_budget: int = 400) -> str:
+        """Build the merged Tier 1 direction block for boot injection.
+
+        Combines north star, growth edges, and active commitments into a
+        single compact block. This replaces the separate identity_context
+        and commitments blocks in T1, eliminating duplicate north star
+        rendering.
+
+        Returns formatted text block, or empty string if no direction data.
+        """
+        char_budget = token_budget * 4
+
+        north_star = self.get_north_star()
+        growth_edges = self.get_active_growth_edges()
+
+        if not north_star and not growth_edges:
+            return ""
+
+        lines = ["═══ DIRECTION ═══", ""]
+
+        # North Star (rendered once, here only)
+        if north_star:
+            ns_content = north_star.content
+            if ns_content.startswith("North Star: "):
+                ns_content = ns_content[len("North Star: "):]
+            lines.append(f"North Star: {ns_content}")
+            lines.append("")
+
+        # Growth edges with status
+        if growth_edges:
+            lines.append("Growth edges (active):")
+            for ge in growth_edges:
+                status = ge.status or "identified"
+                last_date = ge.last_seen[:10] if ge.last_seen else "unknown"
+                lines.append(f"- {ge.content} (status: {status}, last: {last_date})")
+                texture = ge.metadata.get("texture") if ge.metadata else None
+                if texture:
+                    lines.append(f"  ~ {texture}")
+            lines.append("")
+
+        # Inline commitments (self-report tag + signal guidance)
+        lines.append("Self-report: tag [HELD: id] or [MISSED: id] in residue when relevant.")
+        lines.append("")
+
+        lines.append("═══ END DIRECTION ═══")
+        block = "\n".join(lines)
+
+        if len(block) > char_budget:
+            block = block[:char_budget - 3] + "..."
+
+        return block
+
+    def build_t2_identity_block(self, token_budget: int = 1000) -> str:
+        """Build the Tier 2 identity block for deferred loading.
+
+        Contains the retrospective identity content: realizations, patterns,
+        and tensions. North star and growth edges are excluded (already in T1
+        direction block).
+
+        Returns formatted text block, or empty string if no identity data.
+        """
+        char_budget = token_budget * 4
+
+        realizations = self.get_recent_realizations(days=30, limit=5)
+        patterns = self.get_top_patterns(limit=8)
+        tensions = self.get_open_tensions()
+
+        if not any([realizations, patterns, tensions]):
+            return ""
+
+        lines = ["═══ IDENTITY CONTEXT ═══", ""]
+
+        # Recent realizations
+        if realizations:
+            lines.append("Recent realizations:")
+            for r in realizations:
+                date = r.first_seen[:10] if r.first_seen else ""
+                lines.append(f"- {r.content} ({date})")
+                texture = r.metadata.get("texture") if r.metadata else None
+                if texture:
+                    lines.append(f"  ~ {texture}")
+            lines.append("")
+
+        # Known patterns
+        if patterns:
+            lines.append("Known patterns:")
+            for p in patterns:
+                trajectory = p.trajectory or "stable"
+                count = p.observation_count or 0
+                lines.append(f"- {p.content} ({trajectory}, observed {count}x)")
+                texture = p.metadata.get("texture") if p.metadata else None
+                if texture:
+                    lines.append(f"  ~ {texture}")
+            lines.append("")
+
+        # Open tensions
+        if tensions:
+            lines.append("Open tensions:")
+            for t in tensions:
+                lines.append(f"- {t.content}")
+                texture = t.metadata.get("texture") if t.metadata else None
+                if texture:
+                    lines.append(f"  ~ {texture}")
+            lines.append("")
+
+        lines.append("═══ END IDENTITY CONTEXT ═══")
+        block = "\n".join(lines)
+
+        # Truncate: drop tensions first, then patterns, then realizations
+        if len(block) > char_budget:
+            tensions = []
+            block = self._rebuild_t2_identity_block(realizations, patterns, tensions)
+        if len(block) > char_budget:
+            patterns = patterns[:4]
+            block = self._rebuild_t2_identity_block(realizations, patterns, tensions)
+        if len(block) > char_budget:
+            realizations = realizations[:3]
+            block = self._rebuild_t2_identity_block(realizations, patterns, tensions)
+        if len(block) > char_budget:
+            block = block[:char_budget - 3] + "..."
+
+        return block
+
+    def _rebuild_t2_identity_block(self, realizations, patterns, tensions) -> str:
+        """Helper: rebuild T2 identity block from components (for truncation)."""
+        lines = ["═══ IDENTITY CONTEXT ═══", ""]
+        if realizations:
+            lines.append("Recent realizations:")
+            for r in realizations:
+                date = r.first_seen[:10] if r.first_seen else ""
+                lines.append(f"- {r.content} ({date})")
+            lines.append("")
+        if patterns:
+            lines.append("Known patterns:")
+            for p in patterns:
+                trajectory = p.trajectory or "stable"
+                count = p.observation_count or 0
+                lines.append(f"- {p.content} ({trajectory}, observed {count}x)")
+            lines.append("")
+        if tensions:
+            lines.append("Open tensions:")
+            for t in tensions:
+                lines.append(f"- {t.content}")
+            lines.append("")
+        lines.append("═══ END IDENTITY CONTEXT ═══")
+        return "\n".join(lines)
+
     def build_commitments_block(
         self,
         session_id: Optional[str] = None,
