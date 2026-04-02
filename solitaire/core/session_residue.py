@@ -33,6 +33,7 @@ def write_residue(
     persona_key: str = "",
     persona_dir: Optional[str] = None,
     jsonl_store=None,
+    status: str = "final",
 ) -> dict:
     """
     Store a session residue.
@@ -46,6 +47,7 @@ def write_residue(
                      latest_residue.json is written here instead of the
                      ephemeral session-local path.
         jsonl_store: Optional PersonaJsonlStore for JSONL append.
+        status: Residue status: "partial", "final", or "auto-closed".
 
     Returns:
         Status dict with token count and any warnings.
@@ -100,6 +102,7 @@ def write_residue(
                     "persona_key": persona_key,
                     "timestamp": now,
                     "tokens": tokens,
+                    "status": status,
                 },
                 session_id=session_id,
                 record_id=f"residue_{session_id[:8]}",
@@ -123,6 +126,7 @@ def write_residue(
                 "timestamp": now,
                 "residue": residue_text,
                 "tokens": tokens,
+                "status": status,
             }
             # Build history from existing file (keep last N prior entries)
             history: List[dict] = []
@@ -136,7 +140,11 @@ def write_residue(
                         history = existing.get("history", [])
                     else:
                         prev = existing
-                    if prev.get("residue"):
+                    # If prev is from the SAME session and was partial, overwrite
+                    # (don't stack partials in history for the same session)
+                    if prev.get("session_id") == session_id and prev.get("status") == "partial":
+                        pass  # Drop the old partial; new_entry replaces it
+                    elif prev.get("residue"):
                         history.insert(0, prev)
                     history = history[:_RESIDUE_HISTORY_MAX]
             except Exception:
@@ -177,10 +185,11 @@ def load_latest_residue(
     Excludes residues from the current session.
 
     Returns:
-        Dict with keys: text (str), timestamp (str|None), session_id (str|None).
+        Dict with keys: text (str), timestamp (str|None), session_id (str|None),
+        status (str).
         Empty text if none found. Timestamp is ISO format when available.
     """
-    empty = {"text": "", "timestamp": None, "session_id": None}
+    empty = {"text": "", "timestamp": None, "session_id": None, "status": "final"}
 
     # Try file first (fast path), preferring mounted dir
     residue_dir = None
@@ -203,6 +212,7 @@ def load_latest_residue(
                         "text": entry.get("residue", ""),
                         "timestamp": entry.get("timestamp"),
                         "session_id": entry.get("session_id"),
+                        "status": entry.get("status", "final"),
                     }
         except Exception:
             pass
@@ -222,6 +232,7 @@ def load_latest_residue(
                 "text": row[0],
                 "timestamp": row[1] if len(row) > 1 else None,
                 "session_id": row[2] if len(row) > 2 else None,
+                "status": "final",
             }
     except Exception:
         pass
@@ -240,7 +251,7 @@ def load_latest_residue(
 
 def _load_residue_from_jsonl(jsonl_store, current_session_id: str) -> dict:
     """Scan JSONL metadata store for the most recent session_residue record."""
-    empty = {"text": "", "timestamp": None, "session_id": None}
+    empty = {"text": "", "timestamp": None, "session_id": None, "status": "final"}
     try:
         # Scan metadata store for session_residue records
         results = list(jsonl_store.metadata.scan(
@@ -269,6 +280,7 @@ def _load_residue_from_jsonl(jsonl_store, current_session_id: str) -> dict:
             "text": best.get("content", ""),
             "timestamp": best.get("timestamp"),
             "session_id": best.get("session_id"),
+            "status": best.get("status", "final"),
         }
     except Exception:
         return empty
@@ -291,7 +303,7 @@ def load_recent_residues(
     Falls back to DB for additional entries if file doesn't have enough.
 
     Returns:
-        List of dicts with keys: text, timestamp, session_id.
+        List of dicts with keys: text, timestamp, session_id, status.
         Most recent first. Empty list if none found.
     """
     results: List[dict] = []
@@ -327,6 +339,7 @@ def load_recent_residues(
                             "text": c.get("residue", ""),
                             "timestamp": c.get("timestamp"),
                             "session_id": sid,
+                            "status": c.get("status", "final"),
                         })
                         seen_sessions.add(sid)
         except Exception:
@@ -352,6 +365,7 @@ def load_recent_residues(
                         "text": row[0],
                         "timestamp": row[1] if len(row) > 1 else None,
                         "session_id": sid,
+                        "status": "final",
                     })
                     seen_sessions.add(sid)
         except Exception:
@@ -366,7 +380,7 @@ def build_multi_residue_block(residues: List[dict]) -> str:
 
     Args:
         residues: List of dicts from load_recent_residues, each with
-                  text, timestamp, session_id. Most recent first.
+                  text, timestamp, session_id, status. Most recent first.
 
     Returns:
         Formatted block string, or empty string if no residues.
@@ -387,7 +401,12 @@ def build_multi_residue_block(residues: List[dict]) -> str:
         if r.get("session_id"):
             meta_parts.append(f"session: {r['session_id'][:8]}")
 
-        label = "prior session" if i == 0 else f"session {i + 1} ago"
+        residue_status = r.get("status", "final")
+        if i == 0:
+            label = "prior session" if residue_status == "final" else f"prior session, {residue_status}"
+        else:
+            base = f"session {i + 1} ago"
+            label = base if residue_status == "final" else f"{base}, {residue_status}"
         header = f"═══ SESSION RESIDUE ({label})"
         if meta_parts:
             header += f" [{', '.join(meta_parts)}]"
@@ -398,7 +417,8 @@ def build_multi_residue_block(residues: List[dict]) -> str:
     return "\n\n".join(parts)
 
 
-def build_residue_block(residue_text: str, timestamp: Optional[str] = None, session_id: Optional[str] = None) -> str:
+def build_residue_block(residue_text: str, timestamp: Optional[str] = None,
+                        session_id: Optional[str] = None, status: str = "final") -> str:
     """
     Format a residue for injection into the context block.
 
@@ -406,6 +426,7 @@ def build_residue_block(residue_text: str, timestamp: Optional[str] = None, sess
         residue_text: The residue paragraph.
         timestamp: ISO timestamp of when the residue was written (displayed as date hint).
         session_id: Session ID the residue came from (short prefix shown for traceability).
+        status: Residue status for header display.
 
     Returns empty string if no residue available.
     """
@@ -421,12 +442,283 @@ def build_residue_block(residue_text: str, timestamp: Optional[str] = None, sess
     if session_id:
         meta_parts.append(f"session: {session_id[:8]}")
 
-    header = "═══ SESSION RESIDUE (prior session)"
+    label = "prior session" if status == "final" else f"prior session, {status}"
+    header = f"═══ SESSION RESIDUE ({label})"
     if meta_parts:
         header += f" [{', '.join(meta_parts)}]"
     header += " ═══"
 
     return f"{header}\n\n{residue_text.strip()}\n\n═══ END RESIDUE ═══"
+
+
+# ─── Auto-Residue Generation ──────────────────────────────────────────────
+
+def generate_partial_residue(
+    conn: sqlite3.Connection,
+    session_id: str,
+    persona_key: str = "",
+    persona_dir: Optional[str] = None,
+    jsonl_store=None,
+) -> dict:
+    """Generate and write a partial residue by summarizing recent turns.
+
+    Called every 4th turn pair from the ingest pipeline. Uses the configured
+    model for summarization. Overwrites any existing partial for the same session.
+
+    Returns:
+        Status dict with keys: status, tokens, detail.
+    """
+    # Load config for model and API key
+    try:
+        from solitaire.utils.config import LibrarianConfig
+        config = LibrarianConfig.from_env()
+    except Exception:
+        return {"status": "skipped", "detail": "Config unavailable"}
+
+    if not config.anthropic_api_key:
+        return {"status": "skipped", "detail": "No API key configured"}
+
+    # Load existing partial residue for this session (if any)
+    existing_partial = ""
+    residue_dir = None
+    if persona_dir:
+        residue_dir = os.path.join(persona_dir, "residue")
+    else:
+        residue_dir = _residue_dir(conn, persona_key)
+
+    if residue_dir:
+        residue_file = os.path.join(residue_dir, "latest_residue.json")
+        try:
+            if os.path.exists(residue_file):
+                with open(residue_file) as f:
+                    data = json.load(f)
+                latest = data.get("latest", {})
+                if latest.get("session_id") == session_id and latest.get("status") == "partial":
+                    existing_partial = latest.get("residue", "")
+        except Exception:
+            pass
+
+    # Load session tail (already written by write_session_tail before this call)
+    tail_turns = []
+    if residue_dir:
+        tail_file = os.path.join(residue_dir, "latest_tail.json")
+        try:
+            if os.path.exists(tail_file):
+                with open(tail_file) as f:
+                    tail_data = json.load(f)
+                if tail_data.get("session_id") == session_id:
+                    tail_turns = tail_data.get("turns", [])
+        except Exception:
+            pass
+
+    if not tail_turns:
+        return {"status": "skipped", "detail": "No tail turns available"}
+
+    # Format turns for the prompt
+    turn_lines = []
+    for t in tail_turns:
+        role = t.get("role", "unknown").upper()
+        content = t.get("content", "").strip()
+        if content:
+            turn_lines.append(f"[{role}] {content}")
+
+    if not turn_lines:
+        return {"status": "skipped", "detail": "Empty tail turns"}
+
+    # Build the summarization prompt
+    user_parts = []
+    if existing_partial:
+        user_parts.append(f"[EXISTING PARTIAL SUMMARY]\n{existing_partial}\n")
+    user_parts.append("[RECENT TURNS]")
+    user_parts.append("\n".join(turn_lines))
+    user_parts.append("\nWrite a compressed session summary paragraph.")
+
+    # Call the configured model
+    try:
+        import anthropic
+        client = anthropic.Anthropic(api_key=config.anthropic_api_key)
+        response = client.messages.create(
+            model=config.librarian_model,
+            max_tokens=400,
+            system="You are a session recorder for a persistent AI memory system. "
+                   "Compress the conversation context into a single dense paragraph. "
+                   "Include: key topics discussed, decisions made, work completed, "
+                   "and work in progress. No headers, no bullets, just a paragraph. "
+                   "Be specific with names, files, and numbers. Target: 100-300 tokens.",
+            messages=[{"role": "user", "content": "\n".join(user_parts)}],
+            timeout=15.0,
+        )
+
+        if response.content:
+            summary_text = response.content[0].text.strip()
+        else:
+            summary_text = ""
+
+        # Track cost if available
+        try:
+            from solitaire.utils.cost_tracker import CostTracker
+            tracker = CostTracker()
+            if hasattr(response, "usage"):
+                tracker.record(
+                    call_type="partial_residue",
+                    model=config.librarian_model,
+                    input_tokens=response.usage.input_tokens,
+                    output_tokens=response.usage.output_tokens,
+                )
+        except Exception:
+            pass
+
+    except Exception:
+        # API failure: fall back to mechanical summary from tail
+        summary_text = _mechanical_summary(tail_turns)
+
+    if not summary_text:
+        return {"status": "skipped", "detail": "Empty summary generated"}
+
+    # Write the partial residue (overwrites previous partial for same session)
+    result = write_residue(
+        conn=conn,
+        session_id=session_id,
+        residue_text=summary_text,
+        persona_key=persona_key,
+        persona_dir=persona_dir,
+        jsonl_store=jsonl_store,
+        status="partial",
+    )
+    return result
+
+
+def _mechanical_summary(turns: list) -> str:
+    """Fallback summary when API is unavailable. Concatenates truncated turns."""
+    parts = []
+    for t in turns[-6:]:  # Last 6 messages
+        role = t.get("role", "unknown").upper()
+        content = t.get("content", "").strip()
+        if content:
+            snippet = content[:150].strip()
+            if len(content) > 150:
+                snippet += "..."
+            parts.append(f"{role}: {snippet}")
+    if not parts:
+        return ""
+    return "[auto-summary unavailable] Last turns: " + " | ".join(parts)
+
+
+def auto_close_prior_session(
+    conn: sqlite3.Connection,
+    prior_session_id: str,
+    persona_key: str,
+    persona_dir: str,
+    jsonl_store=None,
+) -> dict:
+    """Auto-close a prior session that left a partial residue.
+
+    Loads turn pairs + partial residue from the prior session, runs
+    summarization via the configured model, and writes a final residue
+    with status='auto-closed'.
+
+    Returns:
+        Status dict for inclusion in boot output.
+    """
+    # Load the partial residue text as seed
+    residue_file = os.path.join(persona_dir, "residue", "latest_residue.json")
+    partial_text = ""
+    try:
+        with open(residue_file) as f:
+            data = json.load(f)
+        latest = data.get("latest", {})
+        if latest.get("session_id") == prior_session_id and latest.get("status") == "partial":
+            partial_text = latest.get("residue", "")
+    except Exception:
+        return {"status": "skipped", "detail": "Could not read partial residue"}
+
+    if not partial_text:
+        return {"status": "skipped", "detail": "No partial residue found"}
+
+    # Load messages from the prior session (up to 20 most recent)
+    turn_lines = []
+    try:
+        rows = conn.execute("""
+            SELECT role, content, turn_number
+            FROM messages
+            WHERE conversation_id = ?
+            ORDER BY turn_number DESC, timestamp DESC
+            LIMIT 20
+        """, (prior_session_id,)).fetchall()
+        rows.reverse()
+        for role, content, _tn in rows:
+            if content and content.strip():
+                snippet = content.strip()
+                if estimate_tokens(snippet) > 100:
+                    snippet = snippet[:350] + " [...]"
+                turn_lines.append(f"[{role.upper()}] {snippet}")
+    except Exception:
+        pass
+
+    # Build the summarization prompt
+    user_parts = [f"[PARTIAL SUMMARY FROM MID-SESSION]\n{partial_text}\n"]
+    if turn_lines:
+        user_parts.append("[FULL SESSION TURNS]")
+        user_parts.append("\n".join(turn_lines))
+    user_parts.append("\nProduce a final session summary. The partial summary above covers "
+                      "an earlier snapshot. Incorporate it and add coverage of later turns "
+                      "into a single dense paragraph.")
+
+    # Call the configured model
+    try:
+        from solitaire.utils.config import LibrarianConfig
+        config = LibrarianConfig.from_env()
+        if not config.anthropic_api_key:
+            return {"status": "skipped", "detail": "No API key configured"}
+
+        import anthropic
+        client = anthropic.Anthropic(api_key=config.anthropic_api_key)
+        response = client.messages.create(
+            model=config.librarian_model,
+            max_tokens=500,
+            system="You are a session recorder for a persistent AI memory system. "
+                   "Produce a final compressed summary of this completed session. "
+                   "Include: key topics, decisions made, work completed, outcomes, "
+                   "and any unfinished threads. Single dense paragraph. Be specific "
+                   "with names, files, and numbers. Target: 150-400 tokens.",
+            messages=[{"role": "user", "content": "\n".join(user_parts)}],
+            timeout=15.0,
+        )
+
+        if response.content:
+            summary_text = response.content[0].text.strip()
+        else:
+            return {"status": "skipped", "detail": "Empty response from model"}
+
+        # Track cost
+        try:
+            from solitaire.utils.cost_tracker import CostTracker
+            tracker = CostTracker()
+            if hasattr(response, "usage"):
+                tracker.record(
+                    call_type="auto_close_residue",
+                    model=config.librarian_model,
+                    input_tokens=response.usage.input_tokens,
+                    output_tokens=response.usage.output_tokens,
+                )
+        except Exception:
+            pass
+
+    except Exception:
+        return {"status": "skipped", "detail": "Summarization call failed"}
+
+    # Write the auto-closed residue
+    result = write_residue(
+        conn=conn,
+        session_id=prior_session_id,
+        residue_text=summary_text,
+        persona_key=persona_key,
+        persona_dir=persona_dir,
+        jsonl_store=jsonl_store,
+        status="auto-closed",
+    )
+    result["prior_session_id"] = prior_session_id
+    return result
 
 
 # ─── Session Tail ──────────────────────────────────────────────────────────

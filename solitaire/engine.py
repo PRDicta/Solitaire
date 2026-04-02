@@ -215,6 +215,29 @@ class SolitaireEngine:
         except Exception:
             pass
 
+        # Auto-close prior session if partial residue exists
+        _auto_close_result = None
+        try:
+            _pd = str(self.persona_dir / persona_key) if persona_key else None
+            if _pd:
+                _residue_file = os.path.join(_pd, "residue", "latest_residue.json")
+                if os.path.exists(_residue_file):
+                    with open(_residue_file) as f:
+                        _residue_data = json.load(f)
+                    _latest = _residue_data.get("latest", {})
+                    if (_latest.get("status") == "partial"
+                            and _latest.get("session_id")
+                            and _latest.get("session_id") != self._session_id):
+                        from .core.session_residue import auto_close_prior_session
+                        _auto_close_result = auto_close_prior_session(
+                            conn=self._lib.rolodex.conn,
+                            prior_session_id=_latest["session_id"],
+                            persona_key=persona_key,
+                            persona_dir=_pd,
+                        )
+        except Exception:
+            pass  # Non-fatal
+
         # Get stats
         stats = self._lib.get_stats()
 
@@ -255,6 +278,9 @@ class SolitaireEngine:
             "backup": backup_result,
             "update": update_info,
         }
+
+        if _auto_close_result and _auto_close_result.get("status") != "skipped":
+            result["auto_closed"] = _auto_close_result
 
         self._booted = True
         return result
@@ -409,6 +435,23 @@ class SolitaireEngine:
                 persona_key=self._persona_key or "",
                 persona_dir=persona_dir_str,
             )
+        except Exception:
+            pass  # Non-fatal
+
+        # Partial residue (every 4th turn pair)
+        try:
+            turn_count = self._session_data.get("turn_count", 0)
+            if turn_count > 0 and turn_count % 4 == 0:
+                from .core.session_residue import generate_partial_residue
+                persona_dir_str = str(self.persona_dir / self._persona_key) if self._persona_key else None
+                partial_result = generate_partial_residue(
+                    conn=self._lib.rolodex.conn,
+                    session_id=self._session_id,
+                    persona_key=self._persona_key or "",
+                    persona_dir=persona_dir_str,
+                )
+                if partial_result:
+                    result["partial_residue"] = partial_result
         except Exception:
             pass  # Non-fatal
 
@@ -594,6 +637,7 @@ class SolitaireEngine:
                 session_id=self._session_id,
                 residue_text=text,
                 persona_key=self._persona_key or "",
+                status="final",
             )
             return {
                 "status": "ok",
