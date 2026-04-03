@@ -69,10 +69,10 @@ def _do_recall(ctx, query, include_preflight=True):
     output_json(result)
 
 
-def _do_remember(ctx, fact):
+def _do_remember(ctx, fact, as_reference=False):
     """Shared implementation for remember."""
     engine = get_engine(ctx)
-    result = engine.remember(fact=fact)
+    result = engine.remember(fact=fact, as_reference=as_reference)
     output_json(result)
 
 
@@ -144,10 +144,11 @@ def recall(ctx, query, no_preflight):
 
 @core.command("remember")
 @click.argument("fact")
+@click.option("--reference", is_flag=True, help="Store as reference (quick link) instead of user_knowledge")
 @click.pass_context
-def remember(ctx, fact):
-    """Store a fact as privileged user_knowledge."""
-    _do_remember(ctx, fact)
+def remember(ctx, fact, reference):
+    """Store a fact as privileged user_knowledge or reference."""
+    _do_remember(ctx, fact, as_reference=reference)
 
 
 @core.command("mark-response")

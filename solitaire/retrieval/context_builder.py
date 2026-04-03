@@ -30,6 +30,9 @@ class ContextBuilder:
     BEHAVIORAL_HEADER = "═══ BEHAVIORAL INSTRUCTIONS ═══"
     BEHAVIORAL_FOOTER = "═══ END BEHAVIORAL INSTRUCTIONS ═══"
 
+    REFERENCE_HEADER = "═══ QUICK LINKS ═══"
+    REFERENCE_FOOTER = "═══ END QUICK LINKS ═══"
+
     def build_context_block(
         self,
         entries: List[RolodexEntry],
@@ -228,6 +231,23 @@ class ContextBuilder:
             lines.append(self.SEPARATOR)
             lines.append("")
         lines.append(self.BEHAVIORAL_FOOTER)
+        return "\n".join(lines)
+
+    def build_reference_block(self, entries: list) -> str:
+        """Format reference entries as a quick-links boot block.
+
+        Reference entries contain pointers to repos, external systems,
+        key URLs, and other frequently needed locations. Rendered as
+        compact one-liners. No token cap; all entries load.
+        """
+        if not entries:
+            return ""
+        lines = [self.REFERENCE_HEADER, ""]
+        for entry in entries:
+            lines.append(entry.content)
+            lines.append(self.SEPARATOR)
+            lines.append("")
+        lines.append(self.REFERENCE_FOOTER)
         return "\n".join(lines)
 
     def build_not_found_message(self, query_text: str) -> str:

@@ -1307,6 +1307,28 @@ class Rolodex:
             self._cache_put(entry)
         return entries
 
+    def get_reference_entries(self, limit: int = 20) -> List[RolodexEntry]:
+        """Fetch reference entries for boot-time quick links.
+
+        Reference entries contain pointers to external systems, repo paths,
+        key URLs, and other frequently needed location data. Loaded at boot
+        so the model starts with this knowledge.
+        """
+        rows = self.conn.execute(
+            """SELECT * FROM rolodex_entries
+               WHERE category = 'reference'
+               AND superseded_by IS NULL
+               AND archived_at IS NULL
+               ORDER BY created_at DESC
+               LIMIT ?""",
+            (limit,),
+        ).fetchall()
+        entries = [deserialize_entry(row) for row in rows]
+        for entry in entries:
+            entry.tier = Tier.HOT
+            self._cache_put(entry)
+        return entries
+
     def get_behavioral_entries(self) -> List[RolodexEntry]:
         """Fetch all behavioral entries (compressed instruction documents).
 
