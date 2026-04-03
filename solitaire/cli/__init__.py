@@ -199,11 +199,12 @@ def recall_top(ctx, query, no_preflight):
 
 @cli.command("remember")
 @click.argument("fact")
+@click.option("--reference", is_flag=True, help="Store as reference (quick link) instead of user_knowledge")
 @click.pass_context
-def remember_top(ctx, fact):
-    """Store a fact as privileged user_knowledge."""
+def remember_top(ctx, fact, reference):
+    """Store a fact as privileged user_knowledge or reference."""
     from .core import _do_remember
-    _do_remember(ctx, fact)
+    _do_remember(ctx, fact, as_reference=reference)
 
 
 @cli.command("end")

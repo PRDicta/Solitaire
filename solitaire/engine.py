@@ -575,9 +575,9 @@ class SolitaireEngine:
 
     # ─── Remember ─────────────────────────────────────────────────────────
 
-    def remember(self, fact: str) -> Dict[str, Any]:
+    def remember(self, fact: str, as_reference: bool = False) -> Dict[str, Any]:
         """
-        Store a fact as user_knowledge -- privileged, always-on context.
+        Store a fact as user_knowledge or reference -- privileged, always-on context.
 
         user_knowledge entries are:
         - Always loaded at boot
@@ -585,8 +585,13 @@ class SolitaireEngine:
         - Never demoted from hot tier
         - Ideal for: preferences, biographical details, corrections, working style
 
+        reference entries (as_reference=True):
+        - Loaded at boot in the Quick Links block
+        - Ideal for: repo paths, external system URLs, key resource locations
+
         Args:
             fact: The fact to remember.
+            as_reference: If True, store as reference instead of user_knowledge.
 
         Returns:
             Dict with: remembered count, entry IDs, content preview.
@@ -597,12 +602,13 @@ class SolitaireEngine:
             self._lib.ingest("user", fact)
         )
 
-        # Recategorize as user_knowledge
+        # Recategorize
         from .core.types import EntryCategory
+        target = EntryCategory.REFERENCE if as_reference else EntryCategory.USER_KNOWLEDGE
         for entry in entries:
             self._lib.rolodex.update_entry_enrichment(
                 entry_id=entry.id,
-                category=EntryCategory.USER_KNOWLEDGE,
+                category=target,
             )
 
         return {
@@ -2056,6 +2062,18 @@ class SolitaireEngine:
         except Exception:
             pass
 
+        # ── T1: Reference quick links ────────────────────────────────
+        try:
+            from .retrieval.context_builder import ContextBuilder as _RefCB
+            _ref_cb = _RefCB()
+            ref_entries = self._lib.rolodex.get_reference_entries(limit=20)
+            if ref_entries:
+                ref_block = _ref_cb.build_reference_block(ref_entries)
+                if ref_block:
+                    blocks["reference"] = ref_block
+        except Exception:
+            pass
+
         # ── Experiential memory (load all, split T1/T2) ─────────────
         if not cold:
             try:
@@ -2256,6 +2274,7 @@ class SolitaireEngine:
         ("residue", "SESSION RESIDUE"),
         ("tail", "SESSION TAIL"),
         ("facts", "KNOWN FACTS"),
+        ("reference", "QUICK LINKS"),
         ("briefing", "SITUATIONAL BRIEFING"),
         ("pointers", "REFERENCE"),
     ]
