@@ -289,6 +289,15 @@ class SolitaireEngine:
         except Exception:
             self._trait_snapshot = None
 
+        # Capture pattern snapshot at boot for identity reflection at session end
+        try:
+            from .storage.identity_reflection import capture_pattern_snapshot
+            self._pattern_snapshot = capture_pattern_snapshot(
+                conn=self._lib.rolodex.conn,
+            )
+        except Exception:
+            self._pattern_snapshot = None
+
         self._booted = True
         return result
 
@@ -834,6 +843,18 @@ class SolitaireEngine:
         except Exception:
             pass  # Best-effort; don't block session end
 
+        # Identity reflection (promotes candidates, progresses growth edges)
+        identity_reflection_result = {}
+        try:
+            from .storage.identity_reflection import run_identity_reflection
+            identity_reflection_result = run_identity_reflection(
+                conn=self._lib.rolodex.conn,
+                session_id=session_id,
+                pattern_snapshot=getattr(self, "_pattern_snapshot", None),
+            ) or {}
+        except Exception:
+            pass  # Best-effort; don't block session end
+
         # End the session
         self._lib.end_session(summary=summary)
 
@@ -856,6 +877,8 @@ class SolitaireEngine:
             result["behavioral_diff"] = behavioral_diff_result
         if adaptation_result:
             result["adaptation"] = adaptation_result
+        if identity_reflection_result:
+            result["identity_reflection"] = identity_reflection_result
         return result
 
     # ─── Context Accessors ────────────────────────────────────────────────
@@ -2740,15 +2763,50 @@ class SolitaireEngine:
         except Exception:
             pass
 
-        # Identity enrichment
+        # Identity enrichment (per-role)
         try:
             from .storage.identity_enrichment import run_identity_enrichment
-            id_result = run_identity_enrichment(
-                conn=self._lib.rolodex.conn,
-                content=user_msg + "\n" + assistant_msg,
-                entry_ids=all_entry_ids,
-            )
-            stats["identity"] = id_result or {}
+            id_stats = {}
+            for _msg, _role in [(user_msg, "user"), (assistant_msg, "assistant")]:
+                if not _msg:
+                    continue
+                _id_result = run_identity_enrichment(
+                    conn=self._lib.rolodex.conn,
+                    session_id=self._session_id,
+                    content=_msg,
+                    role=_role,
+                )
+                if _id_result:
+                    id_stats[_role] = _id_result
+            stats["identity"] = id_stats
+        except Exception:
+            pass
+
+        # Retroactive commitment scoring (produces enrichment_scanner signals)
+        try:
+            from .storage.identity_measurement import run_retroactive_scoring
+            if assistant_msg:
+                retro_result = run_retroactive_scoring(
+                    conn=self._lib.rolodex.conn,
+                    session_id=self._session_id,
+                    content=assistant_msg,
+                    role="assistant",
+                )
+                stats["retroactive_scoring"] = retro_result or {}
+        except Exception:
+            pass
+
+        # Implicit behavioral detection (produces enrichment_scanner signals)
+        try:
+            from .storage.identity_measurement import run_implicit_detection
+            if assistant_msg:
+                implicit_result = run_implicit_detection(
+                    conn=self._lib.rolodex.conn,
+                    session_id=self._session_id,
+                    content=assistant_msg,
+                    role="assistant",
+                )
+                stats["implicit_detection"] = implicit_result or {}
         except Exception:
             pass
 
