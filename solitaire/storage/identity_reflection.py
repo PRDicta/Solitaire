@@ -26,6 +26,7 @@ from solitaire.storage.identity_graph import (
 # Signal reliability weights (from Vazire SOKA model, spec §3.4)
 SIGNAL_WEIGHTS = {
     "user_correction": 1.0,
+    "batch_review": 0.8,
     "enrichment_scanner": 0.6,
     "self_report": 0.3,
 }
