@@ -282,6 +282,13 @@ class SolitaireEngine:
         if _auto_close_result and _auto_close_result.get("status") != "skipped":
             result["auto_closed"] = _auto_close_result
 
+        # Capture trait snapshot at boot for behavioral diff at session end
+        try:
+            if self._lib.persona and hasattr(self._lib.persona, 'traits'):
+                self._trait_snapshot = dict(self._lib.persona.traits._values)
+        except Exception:
+            self._trait_snapshot = None
+
         self._booted = True
         return result
 
@@ -784,6 +791,49 @@ class SolitaireEngine:
         except Exception:
             pass  # Best-effort; don't block session end
 
+        # Generate behavioral diff for this session
+        behavioral_diff_result = {}
+        try:
+            from .core.behavioral_diff import generate_behavioral_diff
+            trait_snapshot = getattr(self, '_trait_snapshot', None)
+            behavioral_diff_result = generate_behavioral_diff(
+                conn=self._lib.rolodex.conn,
+                session_id=session_id,
+                persona=self._lib.persona,
+                pattern_snapshot=trait_snapshot,
+            ) or {}
+        except Exception:
+            pass  # Best-effort; don't block session end
+
+        # Run adaptation analysis (thermostat)
+        adaptation_result = {}
+        try:
+            from .core.adaptation_engine import run_adaptation_analysis
+            from .core.trend_analyzer import TrendAnalyzer
+
+            analyzer = TrendAnalyzer(self._lib.rolodex.conn, self._lib.persona)
+            trend_report = analyzer.analyze(max_sessions=30)
+
+            drift_analytics_report = None
+            try:
+                from .core.drift_analytics import DriftAnalytics
+                if self._lib.persona:
+                    da = DriftAnalytics(self._lib.persona)
+                    sessions = analyzer._get_recent_sessions(30)
+                    drift_rows = analyzer._get_drift_entries(sessions)
+                    drift_analytics_report = da.analyze(drift_rows)
+            except Exception:
+                pass
+
+            adaptation_result = run_adaptation_analysis(
+                conn=self._lib.rolodex.conn,
+                persona=self._lib.persona,
+                trend_report=trend_report,
+                drift_analytics=drift_analytics_report,
+            ) or {}
+        except Exception:
+            pass  # Best-effort; don't block session end
+
         # End the session
         self._lib.end_session(summary=summary)
 
@@ -802,6 +852,10 @@ class SolitaireEngine:
         }
         if auto_ratcheted:
             result["auto_ratcheted"] = auto_ratcheted
+        if behavioral_diff_result:
+            result["behavioral_diff"] = behavioral_diff_result
+        if adaptation_result:
+            result["adaptation"] = adaptation_result
         return result
 
     # ─── Context Accessors ────────────────────────────────────────────────
@@ -1792,6 +1846,44 @@ class SolitaireEngine:
             "status": "ok",
             "note": "Reflection requires session_reflection module. Run from workspace CLI.",
         }
+
+    # ─── Trends ──────────────────────────────────────────────────────────
+
+    def trends(self, max_sessions: int = 30) -> Dict[str, Any]:
+        """
+        Run cross-session trend analysis.
+
+        Analyzes signal firing rates, trait trajectories, and commitment
+        outcome arcs across recent sessions. No LLM call.
+
+        Args:
+            max_sessions: Number of recent sessions to analyze.
+
+        Returns:
+            Dict with: trend report data, or error.
+        """
+        self._ensure_booted("trends")
+
+        try:
+            from .core.trend_analyzer import run_trend_analysis, format_trend_report
+            report = run_trend_analysis(
+                conn=self._lib.rolodex.conn,
+                persona=self._lib.persona,
+                max_sessions=max_sessions,
+            )
+            if report:
+                return {
+                    "status": "ok",
+                    "report": report,
+                    "formatted": format_trend_report(report),
+                }
+            return {
+                "status": "ok",
+                "report": {},
+                "note": "No session data available for trend analysis.",
+            }
+        except Exception as e:
+            return {"status": "error", "error": str(e)}
 
     # ─── Onboarding ──────────────────────────────────────────────────────
 

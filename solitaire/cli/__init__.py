@@ -444,6 +444,17 @@ def patterns_top(ctx, window):
     output_json(result)
 
 
+@cli.command("trends")
+@click.option("--sessions", default=30, help="Number of recent sessions to analyze")
+@click.pass_context
+def trends_top(ctx, sessions):
+    """Cross-session trend analysis: signal rates, trait drift, commitment arcs."""
+    from ._engine import get_engine, output_json
+    engine = get_engine(ctx)
+    result = engine.trends(max_sessions=sessions)
+    output_json(result)
+
+
 # ── Entrypoint alias ────────────────────────────────────────────────────
 # pyproject.toml registers "solitaire = solitaire.cli:main" and
 # __main__.py does "from solitaire.cli import main".  Both need this.
