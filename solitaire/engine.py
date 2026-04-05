@@ -1885,6 +1885,65 @@ class SolitaireEngine:
         except Exception as e:
             return {"status": "error", "error": str(e)}
 
+    # ─── Batch Review ────────────────────────────────────────────────────
+
+    def review(
+        self,
+        phase: str = "run",
+        category: str = "auto",
+        limit: int = 20,
+        decisions: Optional[List] = None,
+        dry_run: bool = False,
+    ) -> Dict[str, Any]:
+        """
+        Batch review: model-judged upgrade of heuristic output.
+
+        Two phases:
+            phase="run": gather items for review (returns structured JSON)
+            phase="apply": apply model decisions (writes corrections)
+            phase="status": show review history and override rates
+
+        Args:
+            phase: "run", "apply", or "status"
+            category: Review category or "auto" for rotation
+            limit: Max items to gather
+            decisions: List of decision dicts (for phase="apply")
+            dry_run: Preview changes without writing
+
+        Returns:
+            Dict with gathered items, applied results, or status.
+        """
+        self._ensure_booted("review")
+
+        try:
+            if phase == "run":
+                from .core.batch_review import run_review_gather
+                result = run_review_gather(
+                    conn=self._lib.rolodex.conn,
+                    category=category,
+                    limit=limit,
+                )
+                return result or {"status": "empty", "items": [], "item_count": 0}
+
+            elif phase == "apply":
+                from .core.batch_review import run_review_apply
+                result = run_review_apply(
+                    conn=self._lib.rolodex.conn,
+                    decisions=decisions or [],
+                    dry_run=dry_run,
+                )
+                return result or {"status": "no_changes"}
+
+            elif phase == "status":
+                from .core.batch_review import get_review_status
+                return get_review_status(self._lib.rolodex.conn) or {"runs": [], "category_stats": {}}
+
+            else:
+                return {"status": "error", "error": f"Unknown phase: {phase}"}
+
+        except Exception as e:
+            return {"status": "error", "error": str(e)}
+
     # ─── Onboarding ──────────────────────────────────────────────────────
 
     def onboard_start(self, intent: Optional[str] = None) -> Dict[str, Any]:

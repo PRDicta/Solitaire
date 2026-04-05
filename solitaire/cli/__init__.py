@@ -23,6 +23,7 @@ from .identity import identity
 from .analytics import analytics
 from .tools import tools
 from .maintenance import maintenance
+from .review import review
 from .ingest import ingest
 from .profile import profile
 from .browse import browse
@@ -84,6 +85,7 @@ cli.add_command(identity)
 cli.add_command(analytics)
 cli.add_command(tools)
 cli.add_command(maintenance)
+cli.add_command(review)
 cli.add_command(ingest)
 cli.add_command(profile)
 cli.add_command(browse)
