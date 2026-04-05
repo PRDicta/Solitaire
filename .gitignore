@@ -21,3 +21,9 @@ Thumbs.db
 updater/output/
 mcp-publisher.exe
 mcp-publisher
+.coverage
+.mcpregistry_*
+.update_cache.json
+_boot_*.md
+residue/
+evals/
