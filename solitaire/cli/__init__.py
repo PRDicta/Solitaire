@@ -31,6 +31,7 @@ from .harvest import integrity, hindsight_backfill
 from .onboard import onboard
 from .skills import load_skill
 from .symbiosis import symbiosis
+from .topics import topics
 
 
 def _json_output(data: dict, file=None) -> None:
@@ -94,6 +95,7 @@ cli.add_command(onboard)
 cli.add_command(symbiosis)
 cli.add_command(load_skill)
 cli.add_command(hindsight_backfill)
+cli.add_command(topics)
 
 
 # ── Top-level aliases for frequently-used commands ───────────────────────

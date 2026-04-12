@@ -63,8 +63,26 @@ _TECHNICAL_TERM = re.compile(
     r"|[a-z]+[A-Z][a-zA-Z]+"          # camelCase: querySelector
     r"|[A-Z][a-z]+[A-Z][a-zA-Z]+"     # PascalCase: TopicRouter
     r"|[A-Z]{2,}[a-z][a-zA-Z]*"       # Acronym+word: FTSSearch
+    r"|[a-z]+-[a-z]+(?:-[a-z]+)*"     # hyphenated compounds: auto-recall, topic-router
     r")\b"
 )
+
+# System-internal technical terms that should always be recognized as entities.
+# These are Librarian/Solitaire concepts that won't match the regex patterns above
+# because they look like plain English words.
+_SYSTEM_TERMS = {
+    "auto-recall", "recall", "retrieval", "reranker", "reranking",
+    "rolodex", "ingestion", "ingest", "residue",
+    "preflight", "evaluation gate", "context builder",
+    "topic router", "query expander", "searcher",
+    "embedding", "embeddings", "fts", "fts5",
+    "trigger", "recall trigger", "orchestrator",
+    "backfill", "compaction", "manifest",
+    "identity graph", "knowledge graph",
+    "boot", "briefing", "session briefing",
+    "entity extractor", "entity extraction",
+    "confidence waterfall", "tiered recall",
+}
 
 # Words to exclude from proper noun detection
 _COMMON_SENTENCE_STARTERS = {
@@ -76,6 +94,7 @@ _COMMON_SENTENCE_STARTERS = {
     "so", "yet", "for", "nor", "about", "after", "before",
     "now", "then", "here", "there", "also", "just", "very",
     "my", "your", "his", "her", "our", "their",
+    "we", "us", "me", "i", "you", "they", "them", "he", "she",
     "let", "please", "okay", "ok", "yes", "yeah", "sure",
     "hey", "hi", "hello",
     # Common verbs that appear capitalized at sentence start
@@ -155,8 +174,14 @@ class EntityExtractor:
         # 4. File paths
         result.file_paths = _FILE_PATH.findall(query)
 
-        # 5. Technical terms
+        # 5. Technical terms (regex-detected)
         result.technical_terms = list(set(_TECHNICAL_TERM.findall(query)))
+
+        # 5b. System-internal terms (dictionary-detected)
+        query_lower = query.lower()
+        for term in _SYSTEM_TERMS:
+            if term in query_lower and term not in [t.lower() for t in result.technical_terms]:
+                result.technical_terms.append(term)
 
         # 6. Build flattened entity list
         all_ents: list = []

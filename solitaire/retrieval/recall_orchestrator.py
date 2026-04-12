@@ -584,14 +584,25 @@ class RecallOrchestrator:
     @staticmethod
     def _extract_keywords(message: str) -> List[str]:
         """Extract stop-word-stripped keywords from a message."""
+        import re as _re
         _stop = {
             'the', 'a', 'an', 'is', 'are', 'was', 'were', 'what', 'who', 'how',
             'when', 'where', 'why', 'do', 'does', 'did', 'my', 'your', 'our',
             'this', 'that', 'it', 'i', 'me', 'we', 'us', 'to', 'of', 'in', 'for',
             'on', 'with', 'at', 'by', 'from', 'and', 'or', 'but', 'not', 'can',
             'will', 'would', 'could', 'should', 'has', 'have', 'had', 'be', 'been',
+            # Common noise verbs/words that waste keyword slots
+            'seem', 'seems', 'seemed', 'having', 'going', 'think', 'thinks',
+            'want', 'wants', 'wanted', 'need', 'needs', 'needed', 'know',
+            'like', 'just', 'get', 'got', 'getting', 'make', 'making',
+            'try', 'trying', 'look', 'looking', 'using', 'used',
+            'really', 'actually', 'probably', 'maybe', 'also', 'still',
+            'being', 'some', 'something', 'things', 'thing', 'way',
+            'let', 'see', 'take', 'put', 'give', 'keep', 'run',
         }
-        return [w for w in message.lower().split() if w not in _stop and len(w) > 2][:4]
+        # Strip punctuation from each word before filtering
+        words = [_re.sub(r'[^\w-]', '', w) for w in message.lower().split()]
+        return [w for w in words if w and w not in _stop and len(w) > 2][:4]
 
     @staticmethod
     def _confidence_to_dict(conf) -> Dict:

@@ -25,7 +25,17 @@ def _get_review_conn(ctx) -> sqlite3.Connection:
 
     Finds the active persona's rolodex.db without requiring a booted
     engine. Falls back to workspace-level rolodex.db.
+
+    Env vars:
+        SOLITAIRE_DB_PATH: Direct path to the database file. Takes priority
+            over all discovery logic. Useful when the DB has a non-standard
+            name (e.g. rolodex_chief.db in a Librarian workspace).
     """
+    # Direct path override — bypasses all discovery
+    direct_path = os.environ.get("SOLITAIRE_DB_PATH")
+    if direct_path and Path(direct_path).exists():
+        return sqlite3.connect(direct_path)
+
     workspace = ctx.obj.get("workspace", os.getcwd())
 
     # Try to find persona from session state
@@ -43,6 +53,8 @@ def _get_review_conn(ctx) -> sqlite3.Connection:
     search_paths = []
     if persona_key:
         search_paths.append(Path(workspace) / "personas" / persona_key / "rolodex.db")
+        # Also check Librarian-style per-persona naming (rolodex_{key}.db)
+        search_paths.append(Path(workspace) / f"rolodex_{persona_key}.db")
     search_paths.append(Path(workspace) / "sessions" / "rolodex.db")
     search_paths.append(Path(workspace) / "rolodex.db")
 
