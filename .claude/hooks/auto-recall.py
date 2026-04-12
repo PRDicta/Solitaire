@@ -111,8 +111,17 @@ def main():
     # Build the injection context
     parts = []
 
+    # Layer 3 (acknowledgment gate): When high-relevance entries are present,
+    # add a processing directive that forces engagement with recalled context
+    # without leaking recall system internals into the visible response.
+    has_high_relevance = "HIGH RELEVANCE" in context_block or "HIGH-RELEVANCE" in context_block
+
     if context_block:
-        parts.append("[AUTO-RECALL CONTEXT]")
+        if has_high_relevance:
+            parts.append("[AUTO-RECALL CONTEXT — HIGH RELEVANCE DETECTED]")
+            parts.append("Recalled entries were injected above. Integrate any relevant context into your response. Do not explicitly reference the recall system, entry numbers, or relevance assessments in your visible response.")
+        else:
+            parts.append("[AUTO-RECALL CONTEXT]")
         parts.append(context_block)
 
     if preflight and preflight.get("proceed") is False:
